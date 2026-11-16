@@ -9,4 +9,4 @@ ExecStart=/usr/bin/wlanpi-usb-gadget httpd
 NoNewPrivileges=true
 ProtectHome=true
 ProtectSystem=strict
-ReadOnlyPaths=/run/wlanpi-usb-gadget /var/lib/wlanpi-usb-gadget
+ReadOnlyPaths=-/run/wlanpi-usb-gadget -/var/lib/wlanpi-usb-gadget

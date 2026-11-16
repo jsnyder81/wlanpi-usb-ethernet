@@ -45,7 +45,7 @@ class GadgetConfig:
     address: str = "198.18.42.1/24"
     bridge_name: str = "usb0"
     fallback_linklocal: bool = True
-    serial_console: bool = True
+    serial_console: bool = False
     status_page: bool = True
     status_port: int = 8088
     monitor_recovery: bool = False
@@ -160,7 +160,7 @@ def validate_config(raw: dict[str, str]) -> GadgetConfig:
         )
 
     fallback_linklocal = _parse_bool(raw.get("FALLBACK_LINKLOCAL", "yes"), "FALLBACK_LINKLOCAL")
-    serial_console = _parse_bool(raw.get("SERIAL_CONSOLE", "yes"), "SERIAL_CONSOLE")
+    serial_console = _parse_bool(raw.get("SERIAL_CONSOLE", "no"), "SERIAL_CONSOLE")
     status_page = _parse_bool(raw.get("STATUS_PAGE", "yes"), "STATUS_PAGE")
     status_port = _parse_int(raw.get("STATUS_PORT", "8088"), "STATUS_PORT", minimum=1)
     if status_port > 65535:

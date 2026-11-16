@@ -37,6 +37,13 @@ class TestRecovery(unittest.TestCase):
         self.assertEqual(rc.next_action(state="CONFIGURED_NO_LINK", time_in_state_sec=6.0, now_mono=10.0, enabled=True), "soft_reconnect")
         self.assertEqual(rc.next_action(state="CONFIGURED_NO_LINK", time_in_state_sec=26.0, now_mono=26.0, enabled=True), "teardown_apply")
 
+    def test_unbound_skips_soft_reconnect_and_rebind(self) -> None:
+        rc = RecoveryController(bucket=TokenBucket(budget=3, window_sec=600))
+        self.assertEqual(
+            rc.next_action(state="UNBOUND", time_in_state_sec=6.0, now_mono=10.0, enabled=True),
+            "teardown_apply",
+        )
+
     def test_replug_knock_3_in_20s(self) -> None:
         kd = ReplugKnockDetector()
         self.assertFalse(kd.record_attach(10.0))

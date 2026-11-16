@@ -59,10 +59,6 @@ def render_networkd_files(
         "ConfigureWithoutCarrier=yes",
         "LinkLocalAddressing=no",
     ]
-    if cfg.fallback_linklocal:
-        network_lines.append(f"Address={FALLBACK_IPV4}")
-        network_lines.append(f"Address={FALLBACK_IPV6}")
-
     network_lines.extend(
         [
             "",
@@ -77,9 +73,12 @@ def render_networkd_files(
         network_lines.extend(
             [
                 "",
-                "[Route]",
-                "Destination=169.254.0.0/16",
-                "Metric=2048",
+                "[Address]",
+                f"Address={FALLBACK_IPV4}",
+                "RouteMetric=2048",
+                "",
+                "[Address]",
+                f"Address={FALLBACK_IPV6}",
             ]
         )
     files[f"{FILE_PREFIX}-bridge.network"] = "\n".join(network_lines) + "\n"

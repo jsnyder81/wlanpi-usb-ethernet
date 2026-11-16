@@ -44,12 +44,13 @@ class ProfileSpec:
     bcd_device: str
     summary: str
     configs: tuple[ConfigSpec, ...]
+    b_device_class: str | None = None
     os_desc_qw_sign: str = "MSFT100"
     os_desc_b_vendor_code: str = "0xcd"
     uses_os_desc: bool = True
 
 
-def get_profile(name: str, *, serial_console: bool = True) -> ProfileSpec:
+def get_profile(name: str, *, serial_console: bool = False) -> ProfileSpec:
     """Return the ProfileSpec for `name`, optionally including CDC-ACM serial."""
     if name == "legacy":
         c1_funcs: list[FunctionSpec] = [
@@ -162,6 +163,6 @@ def get_profile(name: str, *, serial_console: bool = True) -> ProfileSpec:
     raise ValueError(f"Unknown profile {name!r}")
 
 
-def list_profiles(*, serial_console: bool = True) -> list[ProfileSpec]:
+def list_profiles(*, serial_console: bool = False) -> list[ProfileSpec]:
     """Return all supported profiles in display order."""
     return [get_profile(name, serial_console=serial_console) for name in ("legacy", "ncm", "ncm-ecm")]

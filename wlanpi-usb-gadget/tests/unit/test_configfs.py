@@ -26,12 +26,19 @@ class TestConfigfs(unittest.TestCase):
         )
 
     def test_plan_determinism_and_ifname(self) -> None:
-        p1 = plan_gadget_tree(get_profile("ncm"), self.macs, "10000000abcdef12")
-        p2 = plan_gadget_tree(get_profile("ncm"), self.macs, "10000000abcdef12")
+        p1 = plan_gadget_tree(get_profile("ncm", serial_console=True), self.macs, "10000000abcdef12")
+        p2 = plan_gadget_tree(get_profile("ncm", serial_console=True), self.macs, "10000000abcdef12")
         self.assertEqual(p1.tree_hash, p2.tree_hash)
         attr_dict = dict(p1.attrs)
         self.assertEqual(attr_dict["functions/ncm.usb0/ifname"], "usbncm0")
         self.assertEqual(attr_dict["functions/ncm.usb0/os_desc/interface.ncm/compatible_id"], "WINNCM")
+
+    def test_legacy_matches_old_device_class_and_no_acm_by_default(self) -> None:
+        leg = get_profile("legacy")
+        plan = plan_gadget_tree(leg, self.macs, "10000000abcdef12")
+        attr_dict = dict(plan.attrs)
+        self.assertNotIn("bDeviceClass", attr_dict)
+        self.assertNotIn("functions/acm.gs0", plan.dirs)
 
     def test_apply_idempotent_and_ordered_teardown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

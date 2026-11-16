@@ -103,6 +103,10 @@ class RecoveryController:
             return "enter_hold"
 
         self.last_action_mono = now_mono
+        if state == "UNBOUND":
+            self.incident_id += 1
+            self.ladder_step = 3
+            return "teardown_apply"
         if self.ladder_step == 0:
             self.incident_id += 1
             self.ladder_step = 1

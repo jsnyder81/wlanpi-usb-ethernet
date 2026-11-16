@@ -23,7 +23,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.address, "198.18.42.1/24")
         self.assertEqual(cfg.bridge_name, "usb0")
         self.assertTrue(cfg.fallback_linklocal)
-        self.assertTrue(cfg.serial_console)
+        self.assertFalse(cfg.serial_console)
         self.assertTrue(cfg.status_page)
         self.assertFalse(cfg.monitor_recovery)
         self.assertEqual(cfg.reset_budget, 3)

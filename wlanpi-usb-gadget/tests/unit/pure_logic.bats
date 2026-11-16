@@ -10,7 +10,6 @@ from wlanpi_usb_gadget.mac import derive_mac, validate_mac
 m1 = derive_mac("10000000abcdef12", "host")
 m2 = derive_mac("10000000abcdef12", "host")
 m3 = derive_mac("10000000abcdef13", "host")
-assert = __import__("builtins").__dict__
 if m1 != m2 or m1 == m3:
     raise SystemExit(1)
 validate_mac(m1)
@@ -72,6 +71,28 @@ assert rc.next_action(state="CONFIGURED_NO_LINK", time_in_state_sec=6.0, now_mon
 assert rc.next_action(state="CONFIGURED_NO_LINK", time_in_state_sec=26.0, now_mono=26.0, enabled=True) == "rebind"
 assert rc.next_action(state="CONFIGURED_NO_LINK", time_in_state_sec=90.0, now_mono=90.0, enabled=True) == "enter_hold"
 assert rc.hold
+'
+  [ "$status" -eq 0 ]
+}
+
+@test "Monitor state machine transitions and dead-man trial reload" {
+  run python3 -c '
+import tempfile
+from pathlib import Path
+from wlanpi_usb_gadget.deadman import load_profile_state, start_trial, tick_trial
+from wlanpi_usb_gadget.statemachine import Signals, StateMachine
+
+sm = StateMachine(initial_state="DETACHED", now_mono=0.0)
+tr = sm.update(Signals(udc_state="configured", carrier_ifaces=("usbncm0",), has_neighbour=True), now_mono=5.0)
+assert tr is not None and tr.new_state == "ONLINE"
+
+with tempfile.TemporaryDirectory() as tmp:
+    p = Path(tmp) / "profile.json"
+    start_trial("ncm", current_default="legacy", path=p)
+    reloaded = load_profile_state(default_profile="legacy", path=p)
+    assert reloaded.in_trial and reloaded.active == "ncm"
+    res = tick_trial(reloaded, gadget_state=sm.state, dt_sec=30.0, online_duration_sec=30.0, trial_timeout_sec=300, path=p)
+    assert res == "commit"
 '
   [ "$status" -eq 0 ]
 }

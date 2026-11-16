@@ -80,13 +80,18 @@ def plan_gadget_tree(
         ("idProduct", PRODUCT_ID),
         ("bcdDevice", profile.bcd_device),
         ("bcdUSB", "0x0200"),
-        ("bDeviceClass", "0x02"),
-        ("bDeviceSubClass", "0x00"),
-        ("bDeviceProtocol", "0x00"),
         ("strings/0x409/serialnumber", serial_number),
         ("strings/0x409/manufacturer", MANUFACTURER),
         ("strings/0x409/product", PRODUCT),
     ]
+    if profile.b_device_class is not None:
+        attrs.extend(
+            [
+                ("bDeviceClass", profile.b_device_class),
+                ("bDeviceSubClass", "0x00"),
+                ("bDeviceProtocol", "0x00"),
+            ]
+        )
     symlinks: list[tuple[str, str]] = []
 
     if profile.uses_os_desc:

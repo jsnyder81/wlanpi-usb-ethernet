@@ -56,6 +56,35 @@ class TestBootcfg(unittest.TestCase):
             self.assertFalse(r.changed)
             self.assertEqual(cfg_txt.read_text(encoding="utf-8"), original)
 
+    def test_repairs_emptied_block_preserves_crlf_and_ignores_out_of_order_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            t = Path(tmp)
+            cfg_txt = t / "config.txt"
+            model_p = t / "wlanpi-model"
+            state_p = t / "bootcfg.changed"
+            model_p.write_text("WLAN Pi Go\n", encoding="utf-8")
+
+            # Emptied block (e.g. if overlay line was manually deleted)
+            cfg_txt.write_bytes(b"[all]\r\n# BEGIN wlanpi-usb-gadget\r\n# END wlanpi-usb-gadget\r\n")
+            r = ensure_bootcfg(cfg_txt, wlanpi_model_path=model_p, dt_model_path=t / "dt", boot_state_path=state_p)
+            self.assertTrue(r.changed)
+            raw = cfg_txt.read_bytes()
+            self.assertIn(b"\r\n", raw)
+            self.assertIn(b"dtoverlay=dwc2 # managed by wlanpi-usb-gadget\r\n", raw)
+            self.assertIn(b"[all]\r\n# END wlanpi-usb-gadget\r\n", raw)
+
+            # Old package sed '/^dtoverlay=dwc2$/d' does not match our line
+            after_sed = "\n".join(
+                ln for ln in cfg_txt.read_text(encoding="utf-8").splitlines() if ln != "dtoverlay=dwc2"
+            ) + "\n"
+            self.assertIn("dtoverlay=dwc2 # managed by wlanpi-usb-gadget", after_sed)
+
+            # Out-of-order markers (END before BEGIN) must not strip user lines
+            from wlanpi_usb_gadget.bootcfg import strip_marked_block
+
+            oo = "# END wlanpi-usb-gadget\n# BEGIN wlanpi-usb-gadget\ndtparam=i2c=on\n"
+            self.assertEqual(strip_marked_block(oo), oo)
+
 
 if __name__ == "__main__":
     unittest.main()

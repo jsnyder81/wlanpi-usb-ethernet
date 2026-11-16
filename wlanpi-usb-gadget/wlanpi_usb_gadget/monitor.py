@@ -185,12 +185,13 @@ def run_monitor() -> int:
     sd_notify("READY=1")
     last_tick = time.monotonic()
     last_udc_state = ""
+    suppress_attach_until = 0.0
 
     try:
         while running:
             if reload_requested:
                 reload_requested = False
-                sd_notify("RELOADING=1")
+                sd_notify(f"RELOADING=1\nMONOTONIC_USEC={int(time.monotonic() * 1_000_000)}")
                 cfg = load_config()
                 recovery.bucket.budget = cfg.reset_budget
                 recovery.bucket.window_sec = cfg.reset_window_sec
@@ -222,6 +223,10 @@ def run_monitor() -> int:
             dt = max(0.0, now - last_tick)
             last_tick = now
 
+            # B4: reload persisted trial state on each tick so `profile set` is picked up live
+            trial_state = load_profile_state(default_profile=cfg.profile)
+            active_profile = trial_state.active
+
             ctrl = detect_controller()
             udcs = list_udcs()
             udc_name = udcs[0] if udcs else ""
@@ -230,10 +235,15 @@ def run_monitor() -> int:
             udc_state = (read_udc_attr(udc_name, "state") if udc_name else None) or ""
             bound = bool(read_bound_udc(DEFAULT_CONFIGFS_ROOT / GADGET_NAME))
 
-            # Detect physical detach -> attach for replug knock & HOLD exit
-            if last_udc_state in ("", "not attached") and udc_state not in ("", "not attached"):
+            # Detect physical detach -> attach for replug knock & HOLD exit (ignore self-induced re-enum)
+            if (
+                now >= suppress_attach_until
+                and last_udc_state in ("", "not attached")
+                and udc_state not in ("", "not attached")
+            ):
                 recovery.on_physical_detach_reattach()
                 if knock.record_attach(now):
+                    need_rebuild = (active_profile != cfg.safe_profile) or (not bound) or recovery.hold
                     log_journal(
                         f"Replug knock detected; reverting to SAFE_PROFILE={cfg.safe_profile}",
                         priority=PRIORITY_WARNING,
@@ -245,16 +255,18 @@ def run_monitor() -> int:
                     trial_state, active_profile = revert_trial(
                         safe_profile=cfg.safe_profile, current_default=cfg.profile
                     )
-                    try:
-                        _execute_recovery_action(
-                            "teardown_apply",
-                            udc_name=udc_name,
-                            cfg=cfg,
-                            profile_name=active_profile,
-                            recovery=recovery,
-                        )
-                    except Exception as exc:
-                        log_journal(f"Replug knock apply failed: {exc}", priority=PRIORITY_ERR)
+                    if need_rebuild and udc_name and recovery.bucket.consume(now):
+                        try:
+                            suppress_attach_until = now + 2.0
+                            _execute_recovery_action(
+                                "teardown_apply",
+                                udc_name=udc_name,
+                                cfg=cfg,
+                                profile_name=active_profile,
+                                recovery=recovery,
+                            )
+                        except Exception as exc:
+                            log_journal(f"Replug knock apply failed: {exc}", priority=PRIORITY_ERR)
             last_udc_state = udc_state
 
             carriers = _read_carrier_ifaces()
@@ -366,6 +378,7 @@ def run_monitor() -> int:
                     detail=f"{action} (remaining={rem})",
                 )
                 try:
+                    suppress_attach_until = now + 2.0
                     _execute_recovery_action(
                         action,
                         udc_name=udc_name,
