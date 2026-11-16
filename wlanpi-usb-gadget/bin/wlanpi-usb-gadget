@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+export PYTHONPATH="/opt/wlanpi-usb-gadget${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m wlanpi_usb_gadget "$@"
