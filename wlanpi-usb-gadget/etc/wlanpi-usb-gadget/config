@@ -1,0 +1,43 @@
+# wlanpi-usb-gadget configuration
+# All keys are optional; defaults are built into the daemon.
+# Format: KEY=value (compatible with systemd EnvironmentFile=)
+
+# Active USB gadget composition profile: legacy | ncm | ncm-ecm
+#PROFILE=legacy
+
+# Fallback profile for dead-man auto-revert and replug knock
+#SAFE_PROFILE=legacy
+
+# Bridge IPv4 address and prefix length (DHCP pool is derived from this)
+#ADDRESS=198.18.42.1/24
+
+# Bridge interface name (fixed at usb0 for avahi allow-list and wlanpi-common)
+#BRIDGE_NAME=usb0
+
+# Add secondary 169.254.42.1/16 and fe80::1/64 fallback addresses
+#FALLBACK_LINKLOCAL=yes
+
+# Expose CDC-ACM USB serial console (/dev/ttyGS0)
+#SERIAL_CONSOLE=yes
+
+# Enable socket-activated HTTP status page on usb0
+#STATUS_PAGE=yes
+
+# Status page TCP port
+#STATUS_PORT=8088
+
+# Active recovery in monitor: off (observe-only) | on
+#MONITOR_RECOVERY=off
+
+# Recovery rate-limit token bucket
+#RESET_BUDGET=3
+#RESET_WINDOW_SEC=600
+
+# Dead-man trial window (host-present seconds before auto-revert)
+#TRIAL_TIMEOUT_SEC=300
+
+# Logging level: info | debug
+#LOG_LEVEL=info
+
+# Optional Phase 0 dwc2 load-order workaround flag (off | on)
+#DWC2_BLACKLIST_WORKAROUND=off
