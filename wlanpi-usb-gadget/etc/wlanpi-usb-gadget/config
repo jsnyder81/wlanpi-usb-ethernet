@@ -18,7 +18,7 @@
 #FALLBACK_LINKLOCAL=yes
 
 # Expose CDC-ACM USB serial console (/dev/ttyGS0)
-#SERIAL_CONSOLE=yes
+#SERIAL_CONSOLE=no
 
 # Enable socket-activated HTTP status page on usb0
 #STATUS_PAGE=yes

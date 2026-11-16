@@ -7,13 +7,16 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from wlanpi_usb_gadget.journal import PRIORITY_INFO, log_journal
+
 BEGIN_MARKER = "# BEGIN wlanpi-usb-gadget"
 END_MARKER = "# END wlanpi-usb-gadget"
-# Trailing comment avoids old package postrm `sed '/^dtoverlay=dwc2$/d'` while
-# remaining a valid dtoverlay=dwc2 directive for the Raspberry Pi bootloader.
-DWC2_OVERLAY_LINE = "dtoverlay=dwc2 # managed by wlanpi-usb-gadget"
+MANAGED_COMMENT = "# managed by wlanpi-usb-gadget"
+# Documented dtoverlay syntax; also avoids old package postrm `sed '/^dtoverlay=dwc2$/d'`.
+DWC2_OVERLAY_LINE = "dtoverlay=dwc2,dr_mode=otg"
 DEFAULT_BLOCK_LINES = (
     BEGIN_MARKER,
+    MANAGED_COMMENT,
     "[cm4]",
     DWC2_OVERLAY_LINE,
     "[all]",
@@ -57,6 +60,11 @@ def detect_board_model(
         if model:
             lower = model.lower()
             is_go = "go" in lower.split() or "oscium go" in lower or "wlan pi go" in lower
+            log_journal(
+                f"bootcfg board detection via {wlanpi_model_path}: model={model!r} is_go={is_go}",
+                priority=PRIORITY_INFO,
+                GADGET_EVENT="bootcfg_detect",
+            )
             return model, is_go
 
     if dt_model_path.exists():
@@ -64,8 +72,19 @@ def detect_board_model(
         if model:
             lower = model.lower()
             is_go = "oscium go" in lower or "wlan pi go" in lower
+            log_journal(
+                f"bootcfg board detection via {dt_model_path} ({wlanpi_model_path} absent): "
+                f"model={model!r} is_go={is_go}",
+                priority=PRIORITY_INFO,
+                GADGET_EVENT="bootcfg_detect",
+            )
             return model, is_go
 
+    log_journal(
+        f"bootcfg board detection: neither {wlanpi_model_path} nor {dt_model_path} present; is_go=False",
+        priority=PRIORITY_INFO,
+        GADGET_EVENT="bootcfg_detect",
+    )
     return "unknown", False
 
 
@@ -93,9 +112,19 @@ def _detect_newline(text: str) -> str:
 
 
 def _is_effective_dwc2_line(raw_line: str) -> bool:
-    code = raw_line.split("#", 1)[0].strip()
-    if not code:
+    """Match documented dtoverlay=dwc2 forms (no inline comments)."""
+    code = raw_line.strip()
+    if not code or code.startswith("#"):
         return False
+    return code == "dtoverlay=dwc2" or code.startswith("dtoverlay=dwc2,")
+
+
+def _is_deprecated_inline_dwc2_line(raw_line: str) -> bool:
+    """Match legacy inline-comment form for check_bootcfg reporting only."""
+    stripped = raw_line.strip()
+    if not stripped or stripped.startswith("#") or "#" not in stripped:
+        return False
+    code = stripped.split("#", 1)[0].strip()
     return code == "dtoverlay=dwc2" or code.startswith("dtoverlay=dwc2,")
 
 
@@ -294,11 +323,13 @@ def check_bootcfg(
 
     text = _read_text_preserve_nl(target)
     marked = has_valid_marked_block(text)
-    dwc2_ok = has_dwc2_overlay(text)
+    deprecated_inline = (not marked) and any(_is_deprecated_inline_dwc2_line(ln) for ln in text.splitlines())
+    dwc2_ok = has_dwc2_overlay(text) or deprecated_inline
     reboot_req = boot_state_path.exists()
     if is_go:
+        block_desc = "present" if marked else ("deprecated inline-comment form (run bootcfg ensure)" if deprecated_inline else "missing")
         msg = (
-            f"Go board ({model}): valid marked block {'present' if marked else 'missing'}, "
+            f"Go board ({model}): valid marked block {block_desc}, "
             f"dtoverlay=dwc2 {'present' if dwc2_ok else 'missing'}"
             + (", reboot required" if reboot_req else "")
         )

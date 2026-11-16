@@ -75,7 +75,7 @@ assert rc.hold
   [ "$status" -eq 0 ]
 }
 
-@test "Monitor state machine transitions and dead-man trial reload" {
+@test "StateMachine transitions and dead-man trial reload" {
   run python3 -c '
 import tempfile
 from pathlib import Path

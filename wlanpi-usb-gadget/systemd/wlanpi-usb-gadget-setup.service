@@ -17,7 +17,7 @@ StateDirectory=wlanpi-usb-gadget
 NoNewPrivileges=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=-/sys/kernel/config -/sys/class/udc -/run/wlanpi-usb-gadget -/run/systemd/network -/var/lib/wlanpi-usb-gadget
+ReadWritePaths=-/sys/kernel/config -/sys/class/udc -/run/wlanpi-usb-gadget /run/systemd -/var/lib/wlanpi-usb-gadget
 
 [Install]
 WantedBy=sysinit.target

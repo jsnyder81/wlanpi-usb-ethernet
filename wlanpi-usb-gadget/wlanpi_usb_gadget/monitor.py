@@ -245,17 +245,17 @@ def run_monitor() -> int:
                 if knock.record_attach(now):
                     need_rebuild = (active_profile != cfg.safe_profile) or (not bound) or recovery.hold
                     log_journal(
-                        f"Replug knock detected; reverting to SAFE_PROFILE={cfg.safe_profile}",
+                        f"Replug knock detected; target SAFE_PROFILE={cfg.safe_profile}",
                         priority=PRIORITY_WARNING,
                         GADGET_EVENT="replug_knock",
                         GADGET_PROFILE=cfg.safe_profile,
                     )
                     record_event("replug_knock", state=sm.state, profile=cfg.safe_profile)
                     recovery.clear_hold()
-                    trial_state, active_profile = revert_trial(
-                        safe_profile=cfg.safe_profile, current_default=cfg.profile
-                    )
                     if need_rebuild and udc_name and recovery.bucket.consume(now):
+                        trial_state, active_profile = revert_trial(
+                            safe_profile=cfg.safe_profile, current_default=cfg.profile
+                        )
                         try:
                             suppress_attach_until = now + 2.0
                             _execute_recovery_action(

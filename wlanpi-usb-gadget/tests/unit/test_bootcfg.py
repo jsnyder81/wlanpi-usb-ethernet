@@ -70,14 +70,27 @@ class TestBootcfg(unittest.TestCase):
             self.assertTrue(r.changed)
             raw = cfg_txt.read_bytes()
             self.assertIn(b"\r\n", raw)
-            self.assertIn(b"dtoverlay=dwc2 # managed by wlanpi-usb-gadget\r\n", raw)
+            self.assertIn(b"# managed by wlanpi-usb-gadget\r\n", raw)
+            self.assertIn(b"dtoverlay=dwc2,dr_mode=otg\r\n", raw)
             self.assertIn(b"[all]\r\n# END wlanpi-usb-gadget\r\n", raw)
 
             # Old package sed '/^dtoverlay=dwc2$/d' does not match our line
             after_sed = "\n".join(
                 ln for ln in cfg_txt.read_text(encoding="utf-8").splitlines() if ln != "dtoverlay=dwc2"
             ) + "\n"
-            self.assertIn("dtoverlay=dwc2 # managed by wlanpi-usb-gadget", after_sed)
+            self.assertIn("dtoverlay=dwc2,dr_mode=otg", after_sed)
+
+            # Deprecated inline-comment form is flagged by check and upgraded by ensure
+            cfg_txt.write_text(
+                "# BEGIN wlanpi-usb-gadget\n[cm4]\ndtoverlay=dwc2 # managed by wlanpi-usb-gadget\n[all]\n# END wlanpi-usb-gadget\n",
+                encoding="utf-8",
+            )
+            chk_dep = check_bootcfg(cfg_txt, wlanpi_model_path=model_p, dt_model_path=t / "dt", boot_state_path=state_p)
+            self.assertFalse(chk_dep.block_present)
+            self.assertIn("deprecated", chk_dep.message)
+            r_upg = ensure_bootcfg(cfg_txt, wlanpi_model_path=model_p, dt_model_path=t / "dt", boot_state_path=state_p)
+            self.assertTrue(r_upg.changed)
+            self.assertIn("dtoverlay=dwc2,dr_mode=otg", cfg_txt.read_text(encoding="utf-8"))
 
             # Out-of-order markers (END before BEGIN) must not strip user lines
             from wlanpi_usb_gadget.bootcfg import strip_marked_block
