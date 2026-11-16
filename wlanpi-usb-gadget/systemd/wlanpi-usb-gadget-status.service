@@ -1,0 +1,12 @@
+[Unit]
+Description=WLAN Pi USB Gadget Read-Only Status Page
+Requires=wlanpi-usb-gadget-status.socket
+
+[Service]
+Type=simple
+DynamicUser=yes
+ExecStart=/usr/bin/wlanpi-usb-gadget httpd
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/run/wlanpi-usb-gadget /var/lib/wlanpi-usb-gadget

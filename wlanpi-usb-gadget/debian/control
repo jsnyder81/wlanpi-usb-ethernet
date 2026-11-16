@@ -1,0 +1,17 @@
+Source: wlanpi-usb-gadget
+Section: net
+Priority: optional
+Maintainer: WLAN Pi Team <maintainers@wlanpi.com>
+Standards-Version: 4.6.2
+Build-Depends: debhelper-compat (= 13), python3
+
+Package: wlanpi-usb-gadget
+Architecture: all
+Depends: ${misc:Depends}, python3 (>= 3.13), systemd (>= 257~), kmod, iproute2
+Recommends: avahi-daemon, wlanpi-common
+Conflicts: wlanpi-usb-ethernet
+Replaces: wlanpi-usb-ethernet
+Description: Next-generation USB gadget manager for WLAN Pi Go
+ Manages USB Ethernet and serial gadget compositions via configfs,
+ systemd-networkd bridging on usb0 with fallback addressing,
+ event-driven link monitoring, and bounded recovery.

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        mkdir -p /var/lib/wlanpi-usb-gadget /run/wlanpi-usb-gadget
+        if command -v wlanpi-usb-gadget >/dev/null 2>&1; then
+            wlanpi-usb-gadget bootcfg ensure || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+exit 0

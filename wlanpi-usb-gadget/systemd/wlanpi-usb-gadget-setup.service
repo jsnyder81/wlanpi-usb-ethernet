@@ -1,0 +1,20 @@
+[Unit]
+Description=WLAN Pi USB Gadget Setup
+DefaultDependencies=no
+After=local-fs.target sys-kernel-config.mount systemd-modules-load.service
+Before=systemd-networkd.service network-pre.target
+Wants=network-pre.target
+RequiresMountsFor=/var/lib/wlanpi-usb-gadget
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/wlanpi-usb-gadget apply
+ExecStop=/usr/bin/wlanpi-usb-gadget teardown
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/sys/kernel/config /sys/class/udc /run/wlanpi-usb-gadget /run/systemd/network /var/lib/wlanpi-usb-gadget
+
+[Install]
+WantedBy=sysinit.target

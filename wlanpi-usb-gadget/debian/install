@@ -1,0 +1,8 @@
+wlanpi_usb_gadget /opt/wlanpi-usb-gadget/
+bin/wlanpi-usb-gadget /usr/bin/
+etc/wlanpi-usb-gadget/config /etc/wlanpi-usb-gadget/
+systemd/wlanpi-usb-gadget-setup.service /usr/lib/systemd/system/
+systemd/wlanpi-usb-gadget-monitor.service /usr/lib/systemd/system/
+systemd/wlanpi-usb-gadget-status.service /usr/lib/systemd/system/
+systemd/wlanpi-usb-gadget-status.socket /usr/lib/systemd/system/
+udev/60-wlanpi-usb-gadget.rules /usr/lib/udev/rules.d/

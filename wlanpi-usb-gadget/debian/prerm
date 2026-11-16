@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|deconfigure)
+        if command -v wlanpi-usb-gadget >/dev/null 2>&1; then
+            wlanpi-usb-gadget bootcfg remove || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+exit 0

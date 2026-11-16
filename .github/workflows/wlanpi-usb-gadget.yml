@@ -1,0 +1,48 @@
+name: wlanpi-usb-gadget CI
+
+on:
+  push:
+    paths:
+      - 'wlanpi-usb-gadget/**'
+      - '.github/workflows/wlanpi-usb-gadget.yml'
+  pull_request:
+    paths:
+      - 'wlanpi-usb-gadget/**'
+      - '.github/workflows/wlanpi-usb-gadget.yml'
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install lint and test tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck bats
+      - name: Shellcheck
+        working-directory: wlanpi-usb-gadget
+        run: make lint
+      - name: Python unit tests
+        working-directory: wlanpi-usb-gadget
+        run: make test
+      - name: Bats unit and maintscript tests
+        working-directory: wlanpi-usb-gadget
+        run: bats tests/unit/*.bats tests/maintscripts/*.bats
+      - name: Loopback integration check (skips if no dummy_hcd)
+        working-directory: wlanpi-usb-gadget
+        run: ./tests/integration/test_dummy_hcd.sh
+
+  deb-trixie:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: apt-get update && apt-get install -y debhelper dpkg-dev python3 lintian
+      - name: Build .deb package
+        working-directory: wlanpi-usb-gadget
+        run: dpkg-buildpackage -us -uc -b
+      - name: Check .deb with lintian
+        run: lintian ../wlanpi-usb-gadget_*.deb || true

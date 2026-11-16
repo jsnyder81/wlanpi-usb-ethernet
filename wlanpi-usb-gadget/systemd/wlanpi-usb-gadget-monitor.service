@@ -1,0 +1,21 @@
+[Unit]
+Description=WLAN Pi USB Gadget Health Monitor
+Wants=wlanpi-usb-gadget-setup.service
+After=wlanpi-usb-gadget-setup.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=notify-reload
+WatchdogSec=30
+Restart=on-failure
+RestartSec=5
+ExecStart=/usr/bin/wlanpi-usb-gadget monitor
+ExecReload=/bin/kill -HUP $MAINPID
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/sys/kernel/config /sys/class/udc /run/wlanpi-usb-gadget /run/systemd/network /var/lib/wlanpi-usb-gadget
+
+[Install]
+WantedBy=multi-user.target

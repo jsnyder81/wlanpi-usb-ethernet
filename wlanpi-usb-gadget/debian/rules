@@ -1,0 +1,15 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_test:
+	python3 -B -m unittest discover -s tests/unit -v
+
+override_dh_install:
+	dh_install -X__pycache__
+
+override_dh_installsystemd:
+	dh_installsystemd --name=wlanpi-usb-gadget-setup --no-stop-on-upgrade --no-restart-after-upgrade
+	dh_installsystemd --name=wlanpi-usb-gadget-monitor
+	dh_installsystemd --name=wlanpi-usb-gadget-status
