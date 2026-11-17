@@ -18,10 +18,13 @@ class TestProfiles(unittest.TestCase):
     def test_legacy_profile(self) -> None:
         p = get_profile("legacy", serial_console=False)
         self.assertEqual(len(p.configs), 2)
-        self.assertTrue(p.configs[0].os_desc_target)
-        self.assertEqual(p.configs[0].functions[0].ifname, "usbrndis%d")
-        self.assertEqual(p.configs[0].functions[0].os_desc_compatible_id, "RNDIS")
-        self.assertEqual(p.configs[1].functions[0].ifname, "usbecm%d")
+        self.assertEqual(p.configs[0].index, 1)
+        self.assertFalse(p.configs[0].os_desc_target)
+        self.assertEqual(p.configs[0].functions[0].ifname, "usbecm%d")
+        self.assertEqual(p.configs[1].index, 2)
+        self.assertTrue(p.configs[1].os_desc_target)
+        self.assertEqual(p.configs[1].functions[0].ifname, "usbrndis%d")
+        self.assertEqual(p.configs[1].functions[0].os_desc_compatible_id, "RNDIS")
 
     def test_ncm_profile(self) -> None:
         p = get_profile("ncm", serial_console=True)

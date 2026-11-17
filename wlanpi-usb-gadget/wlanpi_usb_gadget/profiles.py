@@ -53,7 +53,14 @@ class ProfileSpec:
 def get_profile(name: str, *, serial_console: bool = False) -> ProfileSpec:
     """Return the ProfileSpec for `name`, optionally including CDC-ACM serial."""
     if name == "legacy":
+        # Match wlanpi-usb-ethernet exactly: c.1 = CDC-ECM, c.2 = RNDIS + os_desc.
+        # (ncm and ncm-ecm keep c.1 = NCM + os_desc per plan section 5.)
         c1_funcs: list[FunctionSpec] = [
+            FunctionSpec(kind="ecm", instance="usb0", ifname="usbecm%d"),
+        ]
+        if serial_console:
+            c1_funcs.append(FunctionSpec(kind="acm", instance="gs0"))
+        c2_funcs: list[FunctionSpec] = [
             FunctionSpec(
                 kind="rndis",
                 instance="usb0",
@@ -62,30 +69,25 @@ def get_profile(name: str, *, serial_console: bool = False) -> ProfileSpec:
                 os_desc_sub_compatible_id="5162001",
             )
         ]
-        c2_funcs: list[FunctionSpec] = [
-            FunctionSpec(kind="ecm", instance="usb0", ifname="usbecm%d"),
-        ]
-        if serial_console:
-            c2_funcs.append(FunctionSpec(kind="acm", instance="gs0"))
         return ProfileSpec(
             name="legacy",
             bcd_device="0x0100",
-            summary="Config 1 (OS desc): RNDIS; Config 2: CDC-ECM"
+            summary="Config 1: CDC-ECM; Config 2 (OS desc): RNDIS"
             + (" + ACM serial" if serial_console else ""),
             configs=(
                 ConfigSpec(
                     index=1,
-                    description="RNDIS",
+                    description="CDC ECM",
                     max_power_ma=500,
                     functions=tuple(c1_funcs),
-                    os_desc_target=True,
+                    os_desc_target=False,
                 ),
                 ConfigSpec(
                     index=2,
-                    description="CDC ECM",
+                    description="RNDIS",
                     max_power_ma=500,
                     functions=tuple(c2_funcs),
-                    os_desc_target=False,
+                    os_desc_target=True,
                 ),
             ),
             uses_os_desc=True,

@@ -37,20 +37,16 @@ def render_networkd_files(
     *,
     member_ifnames: list[str] | None = None,
 ) -> dict[str, str]:
-    """Render all generated .netdev, .network, and .link files as {filename: content}."""
+    """Render generated .network and .link files as {filename: content}.
+
+    The bridge netdev itself is created and enslaved via ``ip link`` after UDC
+    bind rather than via a ``.netdev`` file, avoiding systemd-networkd's
+    ``EEXIST`` creation race when networkd is already running. Networkd owns
+    the bridge's IP address, DHCP server, and fallback link-local addresses.
+    """
     files: dict[str, str] = {}
 
-    # 1. Bridge .netdev
-    files[f"{FILE_PREFIX}-bridge.netdev"] = (
-        "[NetDev]\n"
-        f"Name={cfg.bridge_name}\n"
-        "Kind=bridge\n"
-        f"MACAddress={bridge_mac}\n\n"
-        "[Bridge]\n"
-        "STP=no\n"
-    )
-
-    # 2. Bridge .network (systemd 257-safe: no KeepConfiguration= or IPForward=)
+    # 1. Bridge .network (systemd 257-safe: no KeepConfiguration= or IPForward=)
     pool_offset, pool_size = _compute_dhcp_pool(cfg.interface)
     network_lines = [
         "[Match]",
@@ -106,8 +102,9 @@ def render_networkd_files(
             f"Name={ifname}\n"
             "Kind=!bridge\n\n"
             "[Network]\n"
-            f"Bridge={cfg.bridge_name}\n"
             "ConfigureWithoutCarrier=yes\n"
+            "LinkLocalAddressing=no\n"
+            "IPv6AcceptRA=no\n"
         )
 
     # 4. .link file to prevent udev from renaming or randomizing member MACs (7a.1)
@@ -164,18 +161,18 @@ def ensure_bridge_exists(
     *,
     sys_class_net: Path = Path("/sys/class/net"),
 ) -> None:
-    """Create the bridge netdev before UDC bind so kernel-default usb%d starts at usb1+.
+    """Create the bridge netdev after UDC bind if it does not already exist.
 
-    Setup runs Before=systemd-networkd.service, so without pre-creating the bridge,
-    a fallback to kernel-default usb%d would hand usb0 to the first gadget function
-    and block systemd-networkd from creating the usb0 bridge. If a non-bridge
-    interface already occupies `bridge_name`, rename it to `usbgadget0` first.
+    With ``%d`` ifnames, gadget functions never take ``usb0``. In the fallback
+    path where ``ifname`` is rejected and the kernel assigns ``usb0`` to a
+    non-bridge function netdev, rename it to ``usbgadget0`` first before
+    creating the ``usb0`` bridge.
     """
     iface_dir = sys_class_net / bridge_name
     if iface_dir.exists():
         if (iface_dir / "bridge").exists():
             return
-        # A non-bridge netdev occupies bridge_name (e.g. leftover usb0); move it aside.
+        # A non-bridge netdev occupies bridge_name (fallback usb%d collision); move it aside.
         r1 = subprocess.run(["ip", "link", "set", "dev", bridge_name, "down"], capture_output=True, text=True, check=False)
         if r1.returncode != 0:
             log_journal(
@@ -210,6 +207,42 @@ def ensure_bridge_exists(
         )
 
 
+def enslave_and_up_bridge(bridge_name: str, member_ifnames: list[str] | tuple[str, ...]) -> None:
+    """Explicitly enslave gadget member netdevs to the bridge and bring all links UP.
+
+    Ensures member netdevs are IFF_UP immediately after UDC bind so f_ecm/f_rndis
+    signal carrier to the host without waiting on systemd-networkd.
+    """
+    for member in member_ifnames:
+        if not member or member == bridge_name:
+            continue
+        r = subprocess.run(
+            ["ip", "link", "set", "dev", member, "master", bridge_name, "up"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if r.returncode != 0:
+            log_journal(
+                f"ip link set {member} master {bridge_name} up failed (rc={r.returncode}): {r.stderr.strip()}",
+                priority=PRIORITY_WARNING,
+                GADGET_EVENT="bridge_setup_warn",
+            )
+
+    r_br = subprocess.run(
+        ["ip", "link", "set", "dev", bridge_name, "up"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r_br.returncode != 0:
+        log_journal(
+            f"ip link set {bridge_name} up failed (rc={r_br.returncode}): {r_br.stderr.strip()}",
+            priority=PRIORITY_WARNING,
+            GADGET_EVENT="bridge_setup_warn",
+        )
+
+
 def reload_networkd() -> None:
-    """Reload systemd-networkd configuration (systemd 257+ applies .netdev too)."""
+    """Reload systemd-networkd configuration."""
     subprocess.run(["networkctl", "reload"], capture_output=True, text=True, check=False)

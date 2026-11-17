@@ -1,3 +1,13 @@
+wlanpi-usb-gadget (0.5.4) trixie; urgency=medium
+
+  * Fix networkd bridge EEXIST failure (stop pre-creating bridge with
+    .netdev; create/enslave and bring up members and usb0 explicitly via
+    ip link after bind), restore legacy config numbering (c.1=ECM,
+    c.2=RNDIS+os_desc), and clean signature-matched residual
+    usb0.network/usb1.network conffiles in postinst.
+
+ -- WLAN Pi Team <maintainers@wlanpi.com>  Tue, 17 Nov 2026 18:06:44 +0000
+
 wlanpi-usb-gadget (0.5.3) trixie; urgency=medium
 
   * Fix modprobe.d conffile-masking on migration: rename shipped file to

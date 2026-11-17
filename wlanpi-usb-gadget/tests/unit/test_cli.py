@@ -35,9 +35,10 @@ class TestCli(unittest.TestCase):
             mock.patch.object(cli, "build_gadget_tree", side_effect=lambda *_a, **_kw: order.append("build_tree") or "built"),
             mock.patch.object(cli, "wait_for_udc", side_effect=lambda **_kw: order.append("wait_udc") or "fe980000.usb"),
             mock.patch.object(cli, "write_networkd_files", side_effect=lambda *_a, **_kw: order.append("write_netcfg") or []),
-            mock.patch.object(cli, "ensure_bridge_exists", side_effect=lambda *_a, **_kw: order.append("ensure_bridge")),
             mock.patch.object(cli, "bind_gadget_udc", side_effect=lambda *_a, **_kw: order.append("bind_udc") or "applied"),
-            mock.patch.object(cli, "discover_member_ifnames", return_value=["usbrndis0", "usbecm0"]),
+            mock.patch.object(cli, "ensure_bridge_exists", side_effect=lambda *_a, **_kw: order.append("ensure_bridge")),
+            mock.patch.object(cli, "discover_member_ifnames", return_value=["usbecm0", "usbrndis0"]),
+            mock.patch.object(cli, "enslave_and_up_bridge", side_effect=lambda *_a, **_kw: order.append("enslave_bridge")),
             mock.patch.object(cli, "reload_networkd", side_effect=lambda: order.append("reload_netd")),
             mock.patch.object(cli, "log_journal"),
             mock.patch.object(cli, "record_event"),
@@ -46,8 +47,10 @@ class TestCli(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertLess(order.index("build_tree"), order.index("modprobe:dwc2"))
-        self.assertLess(order.index("modprobe:dwc2"), order.index("ensure_bridge"))
-        self.assertLess(order.index("ensure_bridge"), order.index("bind_udc"))
+        self.assertLess(order.index("modprobe:dwc2"), order.index("bind_udc"))
+        self.assertLess(order.index("bind_udc"), order.index("ensure_bridge"))
+        self.assertLess(order.index("ensure_bridge"), order.index("enslave_bridge"))
+        self.assertLess(order.index("enslave_bridge"), order.index("reload_netd"))
 
     def test_apply_refusal_never_touches_bridge(self) -> None:
         macs = DerivedMacs("02:11:22:33:44:55", "02:aa:bb:cc:dd:ee", "02:de:ad:be:ef:01", "test")
@@ -59,6 +62,7 @@ class TestCli(unittest.TestCase):
             mock.patch.object(cli, "ensure_kernel_module"),
             mock.patch.object(cli, "build_gadget_tree", side_effect=ForeignGadgetError("busy")),
             mock.patch.object(cli, "ensure_bridge_exists") as ensure_br,
+            mock.patch.object(cli, "enslave_and_up_bridge") as enslave_br,
             mock.patch.object(cli, "write_networkd_files") as write_net,
             mock.patch.object(cli, "log_journal"),
             mock.patch.object(cli, "record_event"),
@@ -68,6 +72,7 @@ class TestCli(unittest.TestCase):
 
         self.assertEqual(rc, 1)
         ensure_br.assert_not_called()
+        enslave_br.assert_not_called()
         write_net.assert_not_called()
 
 

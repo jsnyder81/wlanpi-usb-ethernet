@@ -65,7 +65,13 @@ class TestConfigfs(unittest.TestCase):
             self.assertEqual(res1, "applied")
             self.assertTrue((root / "wlanpi-usb-gadget" / "UDC").exists())
             self.assertEqual((root / "wlanpi-usb-gadget" / "UDC").read_text().strip(), "fe980000.usb")
-            self.assertTrue((root / "wlanpi-usb-gadget" / "configs" / "c.1" / "rndis.usb0").is_symlink())
+            # Legacy config numbering must match wlanpi-usb-ethernet: c.1=ECM, c.2=RNDIS+os_desc
+            self.assertTrue((root / "wlanpi-usb-gadget" / "configs" / "c.1" / "ecm.usb0").is_symlink())
+            self.assertFalse((root / "wlanpi-usb-gadget" / "configs" / "c.1" / "rndis.usb0").exists())
+            self.assertTrue((root / "wlanpi-usb-gadget" / "configs" / "c.2" / "rndis.usb0").is_symlink())
+            self.assertFalse((root / "wlanpi-usb-gadget" / "configs" / "c.2" / "ecm.usb0").exists())
+            self.assertTrue((root / "wlanpi-usb-gadget" / "os_desc" / "c.2").is_symlink())
+            self.assertFalse((root / "wlanpi-usb-gadget" / "os_desc" / "c.1").exists())
 
             res2 = apply_gadget(
                 plan,

@@ -27,6 +27,7 @@ from wlanpi_usb_gadget.journal import PRIORITY_ERR, PRIORITY_INFO, log_journal
 from wlanpi_usb_gadget.mac import derive_all_macs, read_board_serial
 from wlanpi_usb_gadget.monitor import run_monitor
 from wlanpi_usb_gadget.netcfg import (
+    enslave_and_up_bridge,
     ensure_bridge_exists,
     reload_networkd,
     remove_networkd_files,
@@ -76,14 +77,17 @@ def _cmd_apply(force: bool) -> int:
                 ensure_kernel_module("dwc2")
             udc_name = wait_for_udc(timeout_sec=5.0)
 
-            # 3. Prepare networkd + bridge usb0 AFTER foreign-gadget check and BEFORE UDC bind.
+            # 3. Write networkd/link files AFTER foreign-gadget check and BEFORE UDC bind
+            #    so udev .link rules are in place when function netdevs appear.
             write_networkd_files(cfg, prof, macs.bridge)
-            ensure_bridge_exists(cfg.bridge_name, macs.bridge)
 
             # 4. Bind UDC (reclaims legacy g_ether on EBUSY; refuses other holders).
             res = bind_gadget_udc(plan, udc_name)
 
+        # 5. Create bridge (moving aside any fallback usb0 collision), enslave + UP members & bridge.
+        ensure_bridge_exists(cfg.bridge_name, macs.bridge)
         actual_ifnames = discover_member_ifnames(bridge_name=cfg.bridge_name)
+        enslave_and_up_bridge(cfg.bridge_name, actual_ifnames)
         if actual_ifnames:
             write_networkd_files(cfg, prof, macs.bridge, member_ifnames=actual_ifnames)
         reload_networkd()

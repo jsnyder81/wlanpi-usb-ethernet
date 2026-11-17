@@ -72,6 +72,60 @@ class TestMonitorLoop(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual(state_path.read_text(), "ONLINE:ncm")
 
+    def test_member_up_carrier_and_teardown_apply_enslaves_after_bind(self) -> None:
+        from wlanpi_usb_gadget.mac import DerivedMacs
+        from wlanpi_usb_gadget.recovery import RecoveryController
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sys_net = Path(tmp) / "sys_net"
+            (sys_net / "usbecm0").mkdir(parents=True)
+            (sys_net / "usbecm0" / "carrier").write_text("1\n")
+
+            orig_path = monitor.Path
+
+            def _mock_path(p: str) -> Path:
+                if p == "/sys/class/net":
+                    return sys_net
+                return orig_path(p)
+
+            with mock.patch.object(monitor, "Path", side_effect=_mock_path):
+                self.assertEqual(monitor._read_carrier_ifaces(names=("usbecm0", "usbrndis0")), ("usbecm0",))
+
+        order: list[str] = []
+        macs = DerivedMacs("02:11:22:33:44:55", "02:aa:bb:cc:dd:ee", "02:de:ad:be:ef:01", "test")
+        cfg = GadgetConfig(profile="legacy", safe_profile="legacy")
+        rec = RecoveryController()
+
+        def _fake_apply(plan, udc, *, force=False, before_bind=None):
+            if before_bind is not None:
+                before_bind()
+            order.append("apply_gadget")
+            return "applied"
+
+        with (
+            mock.patch.object(monitor, "teardown_gadget", side_effect=lambda: order.append("teardown") or True),
+            mock.patch.object(monitor, "derive_all_macs", return_value=macs),
+            mock.patch.object(monitor, "read_board_serial", return_value=("10000000abcdef12", "test")),
+            mock.patch.object(monitor, "apply_gadget", side_effect=_fake_apply),
+            mock.patch.object(monitor, "write_networkd_files", side_effect=lambda *_a, **_kw: order.append("write_netcfg") or []),
+            mock.patch.object(monitor, "ensure_bridge_exists", side_effect=lambda *_a, **_kw: order.append("ensure_bridge")),
+            mock.patch.object(monitor, "discover_member_ifnames", return_value=["usbecm0", "usbrndis0"]),
+            mock.patch.object(monitor, "enslave_and_up_bridge", side_effect=lambda *_a, **_kw: order.append("enslave_bridge")),
+            mock.patch.object(monitor, "reload_networkd", side_effect=lambda: order.append("reload_netd")),
+        ):
+            monitor._execute_recovery_action(
+                "teardown_apply",
+                udc_name="fe980000.usb",
+                cfg=cfg,
+                profile_name="legacy",
+                recovery=rec,
+            )
+
+        self.assertTrue(rec.last_bind_succeeded)
+        self.assertLess(order.index("apply_gadget"), order.index("ensure_bridge"))
+        self.assertLess(order.index("ensure_bridge"), order.index("enslave_bridge"))
+        self.assertLess(order.index("enslave_bridge"), order.index("reload_netd"))
+
 
 if __name__ == "__main__":
     unittest.main()

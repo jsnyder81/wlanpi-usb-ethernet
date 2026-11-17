@@ -1,19 +1,8 @@
 #!/bin/sh
 set -e
 
-cleanup_legacy_modprobe_conffile() {
-    conffile="${WLANPI_LEGACY_MODPROBE_CONFFILE:-/etc/modprobe.d/wlanpi-usb-gadget.conf}"
-    [ -f "$conffile" ] || return 0
-
-    # Match old wlanpi-usb-ethernet signature: only comments, blank lines, and 'blacklist dwc2'
-    if ! grep -qx 'blacklist dwc2' "$conffile" 2>/dev/null; then
-        return 0
-    fi
-    if grep -qvE '^(#.*|[[:space:]]*|blacklist dwc2)$' "$conffile" 2>/dev/null; then
-        echo "wlanpi-usb-gadget: leaving modified $conffile untouched" >&2
-        return 0
-    fi
-
+_purge_or_remove_legacy_conffile() {
+    conffile="$1"
     pkg_status="$(dpkg-query -W -f='${Status}\n' wlanpi-usb-ethernet 2>/dev/null || true)"
     case "$pkg_status" in
         *"config-files"*|*"deinstall"*)
@@ -30,10 +19,48 @@ cleanup_legacy_modprobe_conffile() {
     esac
 }
 
+cleanup_legacy_modprobe_conffile() {
+    conffile="${WLANPI_LEGACY_MODPROBE_CONFFILE:-/etc/modprobe.d/wlanpi-usb-gadget.conf}"
+    [ -f "$conffile" ] || return 0
+
+    # Match old wlanpi-usb-ethernet signature: only comments, blank lines, and 'blacklist dwc2'
+    if ! grep -qx 'blacklist dwc2' "$conffile" 2>/dev/null; then
+        return 0
+    fi
+    if grep -qvE '^(#.*|[[:space:]]*|blacklist dwc2)$' "$conffile" 2>/dev/null; then
+        echo "wlanpi-usb-gadget: leaving modified $conffile untouched" >&2
+        return 0
+    fi
+
+    _purge_or_remove_legacy_conffile "$conffile"
+}
+
+cleanup_legacy_networkd_conffiles() {
+    netdir="${WLANPI_LEGACY_NETWORKD_DIR:-/etc/systemd/network}"
+    for iface in usb0 usb1; do
+        conffile="${netdir}/${iface}.network"
+        [ -f "$conffile" ] || continue
+
+        # Match old wlanpi-usb-ethernet usb0.network / usb1.network signature
+        if ! grep -qx "Name=${iface}" "$conffile" 2>/dev/null || \
+           ! grep -qx 'Address=198\.18\.42\.1/24' "$conffile" 2>/dev/null; then
+            echo "wlanpi-usb-gadget: leaving non-matching $conffile untouched" >&2
+            continue
+        fi
+        if grep -qvE "^(\\[Match\\]|Name=${iface}|\\[Network\\]|Address=198\\.18\\.42\\.1/24|DHCPServer=yes|LinkLocalAddressing=no|IPv6AcceptRA=no|\\[Link\\]|RequiredForOnline=no|\\[DHCPServer\\]|PoolOffset=9|PoolSize=11|EmitDNS=no|EmitRouter=no|#.*|[[:space:]]*)\$" "$conffile" 2>/dev/null; then
+            echo "wlanpi-usb-gadget: leaving modified $conffile untouched" >&2
+            continue
+        fi
+
+        _purge_or_remove_legacy_conffile "$conffile"
+    done
+}
+
 case "$1" in
     configure)
         mkdir -p /var/lib/wlanpi-usb-gadget /run/wlanpi-usb-gadget
         cleanup_legacy_modprobe_conffile
+        cleanup_legacy_networkd_conffiles
         if command -v wlanpi-usb-gadget >/dev/null 2>&1; then
             wlanpi-usb-gadget bootcfg ensure || true
         fi

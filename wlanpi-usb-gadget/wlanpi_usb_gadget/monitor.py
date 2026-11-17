@@ -34,7 +34,12 @@ from wlanpi_usb_gadget.journal import (
     log_journal,
 )
 from wlanpi_usb_gadget.mac import derive_all_macs, read_board_serial
-from wlanpi_usb_gadget.netcfg import ensure_bridge_exists, reload_networkd, write_networkd_files
+from wlanpi_usb_gadget.netcfg import (
+    enslave_and_up_bridge,
+    ensure_bridge_exists,
+    reload_networkd,
+    write_networkd_files,
+)
 from wlanpi_usb_gadget.netlink import LinkEvent, NeighEvent, NetlinkListener
 from wlanpi_usb_gadget.profiles import get_profile
 from wlanpi_usb_gadget.recovery import (
@@ -129,12 +134,11 @@ def _execute_recovery_action(
                 plan,
                 udc_name,
                 force=True,
-                before_bind=lambda: (
-                    write_networkd_files(cfg, prof, macs.bridge),
-                    ensure_bridge_exists(cfg.bridge_name, macs.bridge),
-                ),
+                before_bind=lambda: write_networkd_files(cfg, prof, macs.bridge),
             )
+            ensure_bridge_exists(cfg.bridge_name, macs.bridge)
             actual = discover_member_ifnames(bridge_name=cfg.bridge_name)
+            enslave_and_up_bridge(cfg.bridge_name, actual)
             if actual:
                 write_networkd_files(cfg, prof, macs.bridge, member_ifnames=actual)
             reload_networkd()
