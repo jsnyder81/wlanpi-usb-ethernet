@@ -181,9 +181,9 @@ Rules that prevent reset storms:
 
 ### 3.3 Addressing
 
-- The bridge, named `usb0`, gets a fixed MAC, `ConfigureWithoutCarrier=yes`, STP off, and the configured IPv4 address with networkd's DHCP server (no router, no DNS emitted, so the host never routes through the Pi).
-- Function netdevs are named by configfs `ifname` (`usbncm0`, `usbecm0`, `usbrndis0`) and matched by name in generated member files.
-- A generated `50-wlanpi-usb-gadget.link` matches the member names and sets `NamePolicy=keep` and `MACAddressPolicy=none`, so udev on either systemd version neither renames the members nor replaces the MACs this package derived (7a.1).
+- The bridge, named `usb0`, gets a fixed deterministic MAC (`derive_mac(serial, "bridge")`), `ConfigureWithoutCarrier=yes`, STP off, and the configured IPv4 address with networkd's DHCP server (no router, no DNS emitted, so the host never routes through the Pi). `ensure_bridge_exists()` passes `address <bridge_mac>` on creation (and updates existing bridges if mismatched), and `50-wlanpi-usb-gadget-bridge.link` pins `MACAddressPolicy=none` and `MACAddress=<bridge_mac>` so udev's `99-default.link` never randomizes it.
+- Function netdevs are named by configfs `ifname` (`usbncm0`, `usbecm0`, `usbrndis0`) and matched by name in generated member files. Each function role derives its own distinct `dev_addr` from `sha256("wlanpi-usb-gadget:<serial>:<role>")` (`bridge`, `ecm`, `rndis`, plus `ncm` for NCM profiles) so bridge ports are distinguishable and host-side adapter identities stay stable across reboots.
+- Generated `50-wlanpi-usb-gadget.link` (for member interfaces) and `50-wlanpi-usb-gadget-bridge.link` (for `usb0`) set `NamePolicy=keep` and `MACAddressPolicy=none`, so udev on either systemd version neither renames the interfaces nor replaces the MACs this package derived (7a.1).
 - The generated `.network` files use only settings that exist with the same meaning in systemd 257. They do not set `KeepConfiguration=` or `IPForward=`, both of which changed between 252 and 257 (7a.1).
 - Fallback when the host's DHCP client fails (X4): two fixed secondary addresses on the bridge, described under "Fallback reachability" below.
 

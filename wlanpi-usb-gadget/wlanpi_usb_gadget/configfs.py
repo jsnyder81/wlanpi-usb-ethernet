@@ -133,7 +133,7 @@ def plan_gadget_tree(
                 attrs.extend(
                     [
                         (f"{fn_dir}/host_addr", macs.host),
-                        (f"{fn_dir}/dev_addr", macs.device),
+                        (f"{fn_dir}/dev_addr", macs.dev_addr_for(fn.kind)),
                     ]
                 )
                 if fn.ifname:
@@ -178,12 +178,19 @@ def find_foreign_gadget(
     """Return the name of a foreign gadget bound to UDC, if any."""
     if not configfs_root.exists():
         return None
-    for entry in sorted(configfs_root.iterdir()):
+    try:
+        entries = sorted(configfs_root.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
         if not entry.is_dir() or entry.name == own_name:
             continue
         udc_file = entry / "UDC"
         if udc_file.exists():
-            bound = udc_file.read_text(encoding="utf-8", errors="ignore").strip()
+            try:
+                bound = udc_file.read_text(encoding="utf-8", errors="ignore").strip()
+            except OSError:
+                continue
             if bound and (udc_name is None or bound == udc_name):
                 return entry.name
     return None
@@ -310,7 +317,11 @@ def discover_member_ifnames(
     # 1. Read functions/<kind>.<inst>/ifname from configfs (kernel populates actual name)
     functions_dir = gadget_dir / "functions"
     if functions_dir.exists():
-        for fn_dir in sorted(functions_dir.iterdir()):
+        try:
+            fn_dirs = sorted(functions_dir.iterdir())
+        except OSError:
+            fn_dirs = []
+        for fn_dir in fn_dirs:
             if not fn_dir.is_dir():
                 continue
             kind = fn_dir.name.split(".", 1)[0]
@@ -327,7 +338,11 @@ def discover_member_ifnames(
 
     # 2. Cross-check /sys/class/net/*/device for gadget netdevs (e.g. usb0/usb1/usbncm0)
     if sys_class_net.exists():
-        for iface_dir in sorted(sys_class_net.iterdir()):
+        try:
+            net_dirs = sorted(sys_class_net.iterdir())
+        except OSError:
+            net_dirs = []
+        for iface_dir in net_dirs:
             name = iface_dir.name
             if name == bridge_name or (iface_dir / "bridge").exists():
                 continue

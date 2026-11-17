@@ -62,6 +62,7 @@ def save_profile_state(
             fh.write("\n")
             fh.flush()
             os.fsync(fh.fileno())
+        os.chmod(tmp_path, 0o644)
         os.replace(tmp_path, path)
     except Exception:
         tmp_path.unlink(missing_ok=True)

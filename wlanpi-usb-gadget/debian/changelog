@@ -1,3 +1,17 @@
+wlanpi-usb-gadget (0.5.7) trixie; urgency=medium
+
+  * Fix non-root CLI crash when /var/lib/wlanpi-usb-gadget/events.jsonl
+    is unreadable (catch PermissionError in read_events, chmod 0644 on
+    events/profile/state files, audit and harden status/selftest/report
+    read paths).
+  * Derive distinct deterministic per-function dev_addr MACs (ecm, rndis,
+    ncm) and pin deterministic bridge MAC on usb0 (ensure_bridge_exists
+    and 50-wlanpi-usb-gadget-bridge.link).
+  * Harden avahi allow-interfaces selftest check with actionable reload
+    hint.
+
+ -- WLAN Pi Team <maintainers@wlanpi.com>  Tue, 17 Nov 2026 18:55:00 +0000
+
 wlanpi-usb-gadget (0.5.6) trixie; urgency=medium
 
   * Fix postinst syntax error caused by #DEBHELPER# token inside

@@ -6,17 +6,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from wlanpi_usb_gadget.configfs import plan_gadget_tree
 from wlanpi_usb_gadget.mac import (
     MacDerivationError,
     derive_all_macs,
     derive_mac,
     validate_mac,
 )
+from wlanpi_usb_gadget.profiles import get_profile
 
 
 class TestMac(unittest.TestCase):
     def test_derive_mac_format_and_bits(self) -> None:
-        for role in ("host", "device", "bridge"):
+        for role in ("host", "device", "bridge", "ecm", "rndis", "ncm"):
             mac = derive_mac("10000000abcdef12", role)
             validate_mac(mac)
             first_octet = int(mac.split(":")[0], 16)
@@ -28,8 +30,24 @@ class TestMac(unittest.TestCase):
         h2 = derive_mac("10000000abcdef12", "host")
         d1 = derive_mac("10000000abcdef12", "device")
         b1 = derive_mac("10000000abcdef12", "bridge")
+        e1 = derive_mac("10000000abcdef12", "ecm")
+        r1 = derive_mac("10000000abcdef12", "rndis")
+        n1 = derive_mac("10000000abcdef12", "ncm")
         self.assertEqual(h1, h2)
-        self.assertEqual(len({h1, d1, b1}), 3)
+        self.assertEqual(len({h1, d1, b1, e1, r1, n1}), 6)
+
+    def test_per_function_macs_distinct_in_gadget_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            serial_p = Path(tmp) / "serial-number"
+            serial_p.write_bytes(b"10000000abcdef12\x00")
+            macs = derive_all_macs(serial_path=serial_p, machine_id_path=Path(tmp) / "mid")
+            self.assertEqual(len({macs.bridge, macs.ecm, macs.rndis, macs.ncm, macs.host}), 5)
+
+            plan = plan_gadget_tree(get_profile("legacy"), macs, "10000000abcdef12")
+            attrs = dict(plan.attrs)
+            self.assertEqual(attrs["functions/ecm.usb0/dev_addr"], macs.ecm)
+            self.assertEqual(attrs["functions/rndis.usb0/dev_addr"], macs.rndis)
+            self.assertNotEqual(attrs["functions/ecm.usb0/dev_addr"], attrs["functions/rndis.usb0/dev_addr"])
 
     def test_lowest_serial_byte_affects_mac(self) -> None:
         m1 = derive_mac("10000000abcdef12", "host")

@@ -78,6 +78,9 @@ schedule_upgrade_reapply() {
 case "$1" in
     configure)
         mkdir -p /var/lib/wlanpi-usb-gadget /run/wlanpi-usb-gadget
+        for f in /var/lib/wlanpi-usb-gadget/events.jsonl /var/lib/wlanpi-usb-gadget/profile.json /run/wlanpi-usb-gadget/state.json; do
+            [ -f "$f" ] && chmod 0644 "$f" || true
+        done
         cleanup_legacy_modprobe_conffile
         cleanup_legacy_networkd_conffiles
         schedule_upgrade_reapply "${2:-}"

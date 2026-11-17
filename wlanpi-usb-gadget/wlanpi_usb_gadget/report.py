@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import BinaryIO
 
-from wlanpi_usb_gadget.config import load_config
+from wlanpi_usb_gadget.config import ConfigError, GadgetConfig, load_config
 from wlanpi_usb_gadget.configfs import DEFAULT_CONFIGFS_ROOT, GADGET_NAME
 from wlanpi_usb_gadget.events import read_events
 from wlanpi_usb_gadget.status import collect_status, run_selftest
@@ -39,7 +39,11 @@ def _dump_configfs(root: Path = DEFAULT_CONFIGFS_ROOT) -> str:
     if not gadget.exists():
         return f"{gadget} does not exist\n"
     lines: list[str] = []
-    for p in sorted(gadget.rglob("*")):
+    try:
+        entries = sorted(gadget.rglob("*"))
+    except OSError as exc:
+        return f"{gadget} unreadable: {exc}\n"
+    for p in entries:
         rel = p.relative_to(gadget)
         if p.is_symlink():
             lines.append(f"{rel} -> {p.resolve()}")
@@ -56,12 +60,18 @@ def _dump_configfs(root: Path = DEFAULT_CONFIGFS_ROOT) -> str:
 
 def write_report_tgz(out: BinaryIO) -> None:
     """Write a diagnostic .tar.gz bundle to `out`."""
-    cfg = load_config()
+    try:
+        cfg = load_config()
+    except (ConfigError, OSError) as exc:
+        cfg = GadgetConfig(warnings=(str(exc),))
     status = collect_status(cfg)
     selftest = [vars(c) for c in run_selftest(cfg)]
     events = read_events(newest_first=True)
     j_dir = Path("/var/log/journal")
-    journal_persistent = j_dir.exists() and any(j_dir.iterdir())
+    try:
+        journal_persistent = j_dir.exists() and any(j_dir.iterdir())
+    except OSError:
+        journal_persistent = False
 
     with tarfile.open(fileobj=out, mode="w:gz") as tar:
         _add_text_member(tar, "report/status.json", json.dumps(status, indent=2) + "\n")

@@ -32,7 +32,11 @@ def detect_dwc2_mode(
 ) -> str:
     """Return whether dwc2 is loaded as a module, built-in, or not loaded."""
     if proc_modules.exists():
-        for line in proc_modules.read_text(encoding="utf-8", errors="ignore").splitlines():
+        try:
+            text = proc_modules.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            text = ""
+        for line in text.splitlines():
             if line.startswith("dwc2 "):
                 return "module"
     if sys_module_dir.exists():
@@ -51,7 +55,10 @@ def detect_controller(
     if not driver_dir.exists():
         return ControllerInfo(controller=None, dr_mode="unknown", dwc2_mode=dwc2_mode)
 
-    candidates = sorted(p for p in driver_dir.glob("*.usb") if p.is_dir())
+    try:
+        candidates = sorted(p for p in driver_dir.glob("*.usb") if p.is_dir())
+    except OSError:
+        candidates = []
     if not candidates:
         return ControllerInfo(controller=None, dr_mode="unknown", dwc2_mode=dwc2_mode)
 
@@ -59,13 +66,16 @@ def detect_controller(
     dr_mode_path = ctrl / "of_node" / "dr_mode"
     dr_mode = "unknown"
     if dr_mode_path.exists():
-        dr_mode = (
-            dr_mode_path.read_bytes()
-            .replace(b"\x00", b"")
-            .decode("utf-8", errors="ignore")
-            .strip()
-            or "unknown"
-        )
+        try:
+            dr_mode = (
+                dr_mode_path.read_bytes()
+                .replace(b"\x00", b"")
+                .decode("utf-8", errors="ignore")
+                .strip()
+                or "unknown"
+            )
+        except OSError:
+            dr_mode = "unknown"
     return ControllerInfo(controller=ctrl.name, dr_mode=dr_mode, dwc2_mode=dwc2_mode)
 
 
@@ -73,7 +83,10 @@ def list_udcs(udc_dir: Path = UDC_CLASS_DIR) -> list[str]:
     """Return sorted list of UDC names under /sys/class/udc."""
     if not udc_dir.exists():
         return []
-    return sorted(p.name for p in udc_dir.iterdir())
+    try:
+        return sorted(p.name for p in udc_dir.iterdir())
+    except OSError:
+        return []
 
 
 def ensure_kernel_module(name: str) -> None:

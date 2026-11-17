@@ -49,6 +49,7 @@ def write_runtime_state(state: dict[str, Any], path: Path = DEFAULT_STATE_PATH) 
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(state, fh, indent=2, sort_keys=True)
             fh.write("\n")
+        os.chmod(tmp_path, 0o644)
         os.replace(tmp_path, path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
@@ -89,7 +90,10 @@ def _read_netdev_info(ifname: str) -> dict[str, Any]:
 
 
 def _read_bridge_addrs(bridge_name: str) -> list[str]:
-    res = subprocess.run(["ip", "-j", "addr", "show", "dev", bridge_name], capture_output=True, text=True, check=False)
+    try:
+        res = subprocess.run(["ip", "-j", "addr", "show", "dev", bridge_name], capture_output=True, text=True, check=False)
+    except OSError:
+        return []
     if res.returncode != 0 or not res.stdout.strip():
         return []
     try:
@@ -107,7 +111,10 @@ def _read_bridge_addrs(bridge_name: str) -> list[str]:
 
 
 def _read_neighbours(bridge_name: str) -> list[dict[str, str]]:
-    res = subprocess.run(["ip", "-j", "neigh", "show", "dev", bridge_name], capture_output=True, text=True, check=False)
+    try:
+        res = subprocess.run(["ip", "-j", "neigh", "show", "dev", bridge_name], capture_output=True, text=True, check=False)
+    except OSError:
+        return []
     if res.returncode != 0 or not res.stdout.strip():
         return []
     try:
@@ -130,7 +137,11 @@ def _read_dhcp_leases(leases_dir: Path = NETIF_LEASES_DIR) -> list[dict[str, str
     if not leases_dir.exists():
         return []
     leases: list[dict[str, str]] = []
-    for lf in sorted(leases_dir.iterdir()):
+    try:
+        entries = sorted(leases_dir.iterdir())
+    except OSError:
+        return []
+    for lf in entries:
         if not lf.is_file():
             continue
         try:
@@ -202,14 +213,24 @@ def _read_configfs_summary(configfs_root: Path = DEFAULT_CONFIGFS_ROOT) -> dict[
     os_desc_targets: set[str] = set()
     os_desc_dir = gadget_dir / "os_desc"
     if os_desc_dir.exists():
-        for item in os_desc_dir.iterdir():
-            if item.is_symlink():
-                os_desc_targets.add(item.name)
+        try:
+            for item in os_desc_dir.iterdir():
+                if item.is_symlink():
+                    os_desc_targets.add(item.name)
+        except OSError:
+            pass
     if cfg_root.exists():
-        for c in sorted(cfg_root.iterdir()):
+        try:
+            cfg_dirs = sorted(cfg_root.iterdir())
+        except OSError:
+            cfg_dirs = []
+        for c in cfg_dirs:
             if not c.is_dir():
                 continue
-            funcs = sorted(x.name for x in c.iterdir() if x.is_symlink())
+            try:
+                funcs = sorted(x.name for x in c.iterdir() if x.is_symlink())
+            except OSError:
+                funcs = []
             configs.append({"name": c.name, "functions": funcs, "os_desc": c.name in os_desc_targets})
     summary["configs"] = configs
     return summary
@@ -340,24 +361,44 @@ def run_selftest(
 
     # 8. Avahi allow-interfaces & use-ipv6
     if avahi_conf.exists():
-        av_text = avahi_conf.read_text(encoding="utf-8", errors="ignore")
-        allow_line = next((l.strip() for l in av_text.splitlines() if l.strip().startswith("allow-interfaces=")), "")
-        use_ipv6 = next((l.strip() for l in av_text.splitlines() if l.strip().startswith("use-ipv6=")), "use-ipv6=unset")
-        if allow_line:
-            allowed = [x.strip() for x in allow_line.split("=", 1)[1].split(",")]
-            if cfg.bridge_name in allowed:
-                checks.append(SelftestCheck("avahi_allow_interfaces", "pass", f"{allow_line}; {use_ipv6}"))
+        try:
+            av_text = avahi_conf.read_text(encoding="utf-8", errors="ignore")
+        except OSError as exc:
+            checks.append(SelftestCheck("avahi_allow_interfaces", "info", f"cannot read {avahi_conf}: {exc}"))
+        else:
+            allow_line = next(
+                (
+                    l.strip()
+                    for l in av_text.splitlines()
+                    if not l.strip().startswith("#") and l.strip().split("=", 1)[0].strip() == "allow-interfaces"
+                ),
+                "",
+            )
+            use_ipv6 = next(
+                (
+                    l.strip()
+                    for l in av_text.splitlines()
+                    if not l.strip().startswith("#") and l.strip().split("=", 1)[0].strip() == "use-ipv6"
+                ),
+                "use-ipv6=unset",
+            )
+            if allow_line:
+                allowed = [x.strip() for x in allow_line.split("=", 1)[1].split(",") if x.strip()]
+                if cfg.bridge_name in allowed:
+                    checks.append(SelftestCheck("avahi_allow_interfaces", "pass", f"{allow_line}; {use_ipv6}"))
+                else:
+                    checks.append(
+                        SelftestCheck(
+                            "avahi_allow_interfaces",
+                            "warn",
+                            f"{cfg.bridge_name} missing from {allow_line}",
+                            f"Add {cfg.bridge_name} to allow-interfaces in {avahi_conf} and run 'sudo systemctl reload avahi-daemon'",
+                        )
+                    )
             else:
                 checks.append(
-                    SelftestCheck(
-                        "avahi_allow_interfaces",
-                        "warn",
-                        f"{cfg.bridge_name} missing from {allow_line}",
-                        f"Add {cfg.bridge_name} to allow-interfaces in {avahi_conf}",
-                    )
+                    SelftestCheck("avahi_allow_interfaces", "pass", f"no allow-interfaces restriction; {use_ipv6}")
                 )
-        else:
-            checks.append(SelftestCheck("avahi_allow_interfaces", "pass", f"no allow-interfaces restriction; {use_ipv6}"))
     else:
         checks.append(SelftestCheck("avahi_allow_interfaces", "info", f"{avahi_conf} not found"))
 
@@ -379,7 +420,10 @@ def run_selftest(
 
     # 10. Journal persistence (informational)
     j_dir = Path("/var/log/journal")
-    persistent = j_dir.exists() and any(j_dir.iterdir())
+    try:
+        persistent = j_dir.exists() and any(j_dir.iterdir())
+    except OSError:
+        persistent = False
     checks.append(
         SelftestCheck(
             "journal_persistence",
@@ -422,7 +466,10 @@ def collect_status(
 ) -> dict[str, Any]:
     """Collect full status dictionary for CLI and HTTP status page."""
     if cfg is None:
-        cfg = load_config()
+        try:
+            cfg = load_config()
+        except (ConfigError, OSError) as exc:
+            cfg = GadgetConfig(warnings=(str(exc),))
     rt = read_runtime_state(state_path)
     ctrl = detect_controller()
     udcs = list_udcs()
@@ -441,10 +488,14 @@ def collect_status(
     br_addrs = _read_bridge_addrs(cfg.bridge_name)
     ev_kwargs = {"events_path": events_path} if events_path is not None else {}
     all_events = read_events(**ev_kwargs, limit=50, newest_first=True)
+    events_note = next(
+        (str(e.get("detail", "")) for e in all_events if e.get("event") in ("permission_denied", "read_error")),
+        "",
+    )
     recoveries = [e for e in all_events if e.get("event") in ("recovery", "hold", "deadman_revert")][:5]
     selftest = [asdict(c) for c in run_selftest(cfg, configfs_root=configfs_root)]
 
-    return {
+    out: dict[str, Any] = {
         "version": __version__,
         "profile": rt.get("profile", cfg.profile),
         "profile_status": rt.get("profile_status", "committed"),
@@ -472,6 +523,9 @@ def collect_status(
         "reset_budget_remaining": rt.get("reset_budget_remaining", cfg.reset_budget),
         "selftest": selftest,
     }
+    if events_note:
+        out["events_note"] = events_note
+    return out
 
 
 def status_exit_code(status: dict[str, Any]) -> int:
@@ -500,6 +554,8 @@ def format_status_human(status: dict[str, Any]) -> str:
         f"  Neighbours: {status['bridge']['neighbours'] or 'none'}",
         f"Reset budget remaining: {status.get('reset_budget_remaining')}",
     ]
+    if status.get("events_note"):
+        lines.append(f"Events: {status['events_note']}")
     failed = [c for c in status.get("selftest", []) if c["status"] in ("fail", "warn")]
     if failed:
         lines.append("Selftest issues:")

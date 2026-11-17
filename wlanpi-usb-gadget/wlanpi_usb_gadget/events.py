@@ -41,7 +41,11 @@ def record_event(
         "detail": detail,
     }
 
-    existing = read_events(events_path=events_path, newest_first=False)
+    existing = read_events(
+        events_path=events_path,
+        newest_first=False,
+        raise_on_permission_error=True,
+    )
     existing.append(entry)
     trimmed = existing[-max_events:]
 
@@ -54,6 +58,7 @@ def record_event(
                 fh.write(json.dumps(item, separators=(",", ":")) + "\n")
             fh.flush()
             os.fsync(fh.fileno())
+        os.chmod(tmp_path, 0o644)
         os.replace(tmp_path, events_path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
@@ -67,12 +72,28 @@ def read_events(
     events_path: Path = DEFAULT_EVENTS_PATH,
     limit: int | None = None,
     newest_first: bool = True,
+    raise_on_permission_error: bool = False,
 ) -> list[dict[str, Any]]:
-    """Read recorded events from disk, tolerating corrupt lines."""
-    if not events_path.exists():
-        return []
+    """Read recorded events from disk, tolerating corrupt lines and permission errors."""
+    try:
+        if not events_path.exists():
+            return []
+        text = events_path.read_text(encoding="utf-8", errors="ignore")
+    except PermissionError:
+        if raise_on_permission_error:
+            raise
+        if limit == 0:
+            return []
+        return [{"event": "permission_denied", "detail": "events: permission denied (use sudo)"}]
+    except OSError as exc:
+        if raise_on_permission_error:
+            raise
+        if limit == 0:
+            return []
+        return [{"event": "read_error", "detail": f"events: {exc}"}]
+
     items: list[dict[str, Any]] = []
-    for line in events_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue

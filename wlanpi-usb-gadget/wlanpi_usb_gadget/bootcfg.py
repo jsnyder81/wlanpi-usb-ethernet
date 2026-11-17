@@ -56,7 +56,10 @@ def detect_board_model(
 ) -> tuple[str, bool]:
     """Return (model_name, is_go)."""
     if wlanpi_model_path.exists():
-        model = wlanpi_model_path.read_text(encoding="utf-8", errors="ignore").strip()
+        try:
+            model = wlanpi_model_path.read_text(encoding="utf-8", errors="ignore").strip()
+        except OSError:
+            model = ""
         if model:
             lower = model.lower()
             is_go = "go" in lower.split() or "oscium go" in lower or "wlan pi go" in lower
@@ -68,7 +71,10 @@ def detect_board_model(
             return model, is_go
 
     if dt_model_path.exists():
-        model = dt_model_path.read_bytes().replace(b"\x00", b"").decode("utf-8", errors="ignore").strip()
+        try:
+            model = dt_model_path.read_bytes().replace(b"\x00", b"").decode("utf-8", errors="ignore").strip()
+        except OSError:
+            model = ""
         if model:
             lower = model.lower()
             is_go = "oscium go" in lower or "wlan pi go" in lower
@@ -321,7 +327,17 @@ def check_bootcfg(
             message="config.txt not found",
         )
 
-    text = _read_text_preserve_nl(target)
+    try:
+        text = _read_text_preserve_nl(target)
+    except OSError as exc:
+        return BootCfgResult(
+            is_go=is_go,
+            board_model=model,
+            changed=False,
+            block_present=False,
+            reboot_required=False,
+            message=f"Cannot read {target}: {exc}",
+        )
     marked = has_valid_marked_block(text)
     deprecated_inline = (not marked) and any(_is_deprecated_inline_dwc2_line(ln) for ln in text.splitlines())
     dwc2_ok = has_dwc2_overlay(text) or deprecated_inline

@@ -75,6 +75,25 @@ class TestCli(unittest.TestCase):
         enslave_br.assert_not_called()
         write_net.assert_not_called()
 
+    def test_selftest_avahi_allow_interfaces_check(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from wlanpi_usb_gadget.config import validate_config
+        from wlanpi_usb_gadget.status import run_selftest
+
+        cfg = validate_config({})
+        with tempfile.TemporaryDirectory() as tmp:
+            avahi = Path(tmp) / "avahi-daemon.conf"
+            avahi.write_text("[server]\nallow-interfaces=usb0, eth0, wlan0, wlan1\nuse-ipv6=no\n", encoding="utf-8")
+            checks = {c.name: c for c in run_selftest(cfg, configfs_root=Path(tmp) / "cfs", network_dir=Path(tmp) / "net", avahi_conf=avahi)}
+            self.assertEqual(checks["avahi_allow_interfaces"].status, "pass")
+
+            avahi.write_text("[server]\nallow-interfaces=eth0, wlan0\nuse-ipv6=no\n", encoding="utf-8")
+            checks = {c.name: c for c in run_selftest(cfg, configfs_root=Path(tmp) / "cfs", network_dir=Path(tmp) / "net", avahi_conf=avahi)}
+            self.assertEqual(checks["avahi_allow_interfaces"].status, "warn")
+            self.assertIn("usb0 missing", checks["avahi_allow_interfaces"].detail)
+            self.assertIn("Add usb0 to allow-interfaces", checks["avahi_allow_interfaces"].hint)
+
 
 if __name__ == "__main__":
     unittest.main()

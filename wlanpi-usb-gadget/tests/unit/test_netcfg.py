@@ -11,6 +11,7 @@ from unittest import mock
 from wlanpi_usb_gadget.config import validate_config
 from wlanpi_usb_gadget.netcfg import (
     enslave_and_up_bridge,
+    ensure_bridge_exists,
     remove_networkd_files,
     render_networkd_files,
     write_networkd_files,
@@ -28,6 +29,11 @@ class TestNetcfg(unittest.TestCase):
         self.assertIn("50-wlanpi-usb-gadget-member-usbrndis0.network", files)
         self.assertIn("50-wlanpi-usb-gadget-member-usbecm0.network", files)
         self.assertIn("50-wlanpi-usb-gadget.link", files)
+        self.assertIn("50-wlanpi-usb-gadget-bridge.link", files)
+        br_link = files["50-wlanpi-usb-gadget-bridge.link"]
+        self.assertIn("Kind=bridge", br_link)
+        self.assertIn("MACAddressPolicy=none", br_link)
+        self.assertIn("MACAddress=02:de:ad:be:ef:01", br_link)
 
         for member in (
             "50-wlanpi-usb-gadget-member-usbecm0.network",
@@ -91,6 +97,23 @@ class TestNetcfg(unittest.TestCase):
                 ["ip", "link", "set", "dev", "usb0", "up"],
             ],
         )
+
+    def test_ensure_bridge_exists_pins_deterministic_mac_on_existing_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sys_net = Path(tmp)
+            br_dir = sys_net / "usb0"
+            (br_dir / "bridge").mkdir(parents=True)
+            (br_dir / "address").write_text("0e:35:4e:d2:55:17\n", encoding="utf-8")
+            calls: list[list[str]] = []
+
+            def _fake_run(cmd: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
+                calls.append(cmd)
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with mock.patch("wlanpi_usb_gadget.netcfg.subprocess.run", side_effect=_fake_run):
+                ensure_bridge_exists("usb0", "02:de:ad:be:ef:01", sys_class_net=sys_net)
+
+            self.assertEqual(calls, [["ip", "link", "set", "dev", "usb0", "address", "02:de:ad:be:ef:01"]])
 
 
 if __name__ == "__main__":

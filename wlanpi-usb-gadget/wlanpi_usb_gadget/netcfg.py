@@ -116,7 +116,8 @@ def render_networkd_files(
             "IPv6AcceptRA=no\n"
         )
 
-    # 4. .link file to prevent udev from renaming or randomizing member MACs (7a.1)
+    # 4. .link files: prevent udev from renaming/randomizing member MACs (7a.1)
+    #    and pin the bridge's deterministic MAC against 99-default.link.
     if ifnames:
         files[f"{FILE_PREFIX}.link"] = (
             "[Match]\n"
@@ -125,6 +126,15 @@ def render_networkd_files(
             "NamePolicy=keep\n"
             "MACAddressPolicy=none\n"
         )
+    files[f"{FILE_PREFIX}-bridge.link"] = (
+        "[Match]\n"
+        f"OriginalName={cfg.bridge_name}\n"
+        "Kind=bridge\n\n"
+        "[Link]\n"
+        "NamePolicy=keep\n"
+        "MACAddressPolicy=none\n"
+        f"MACAddress={bridge_mac}\n"
+    )
 
     return files
 
@@ -180,6 +190,26 @@ def ensure_bridge_exists(
     iface_dir = sys_class_net / bridge_name
     if iface_dir.exists():
         if (iface_dir / "bridge").exists():
+            addr_file = iface_dir / "address"
+            current_mac = ""
+            if addr_file.exists():
+                try:
+                    current_mac = addr_file.read_text(encoding="utf-8", errors="ignore").strip().lower()
+                except OSError:
+                    pass
+            if current_mac != bridge_mac.lower():
+                r_mac = subprocess.run(
+                    ["ip", "link", "set", "dev", bridge_name, "address", bridge_mac],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if r_mac.returncode != 0:
+                    log_journal(
+                        f"ip link set {bridge_name} address {bridge_mac} failed (rc={r_mac.returncode}): {r_mac.stderr.strip()}",
+                        priority=PRIORITY_WARNING,
+                        GADGET_EVENT="bridge_setup_warn",
+                    )
             return
         # A non-bridge netdev occupies bridge_name (fallback usb%d collision); move it aside.
         r1 = subprocess.run(["ip", "link", "set", "dev", bridge_name, "down"], capture_output=True, text=True, check=False)
