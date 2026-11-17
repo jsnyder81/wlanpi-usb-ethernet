@@ -6,4 +6,4 @@ systemd/wlanpi-usb-gadget-monitor.service /usr/lib/systemd/system/
 systemd/wlanpi-usb-gadget-status.service /usr/lib/systemd/system/
 systemd/wlanpi-usb-gadget-status.socket /usr/lib/systemd/system/
 udev/60-wlanpi-usb-gadget.rules /usr/lib/udev/rules.d/
-modprobe/wlanpi-usb-gadget.conf /usr/lib/modprobe.d/
+modprobe/wlanpi-usb-gadget-legacy-disable.conf /usr/lib/modprobe.d/

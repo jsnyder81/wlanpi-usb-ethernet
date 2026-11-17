@@ -1,9 +1,39 @@
 #!/bin/sh
 set -e
 
+cleanup_legacy_modprobe_conffile() {
+    conffile="${WLANPI_LEGACY_MODPROBE_CONFFILE:-/etc/modprobe.d/wlanpi-usb-gadget.conf}"
+    [ -f "$conffile" ] || return 0
+
+    # Match old wlanpi-usb-ethernet signature: only comments, blank lines, and 'blacklist dwc2'
+    if ! grep -qx 'blacklist dwc2' "$conffile" 2>/dev/null; then
+        return 0
+    fi
+    if grep -qvE '^(#.*|[[:space:]]*|blacklist dwc2)$' "$conffile" 2>/dev/null; then
+        echo "wlanpi-usb-gadget: leaving modified $conffile untouched" >&2
+        return 0
+    fi
+
+    pkg_status="$(dpkg-query -W -f='${Status}\n' wlanpi-usb-ethernet 2>/dev/null || true)"
+    case "$pkg_status" in
+        *"config-files"*|*"deinstall"*)
+            echo "wlanpi-usb-gadget: purging residual wlanpi-usb-ethernet conffile $conffile" >&2
+            dpkg --purge wlanpi-usb-ethernet >/dev/null 2>&1 || true
+            ;;
+        ""|*"not-installed"*)
+            echo "wlanpi-usb-gadget: removing orphaned legacy conffile $conffile" >&2
+            rm -f "$conffile"
+            ;;
+        *)
+            echo "wlanpi-usb-gadget: wlanpi-usb-ethernet status '$pkg_status'; leaving $conffile" >&2
+            ;;
+    esac
+}
+
 case "$1" in
     configure)
         mkdir -p /var/lib/wlanpi-usb-gadget /run/wlanpi-usb-gadget
+        cleanup_legacy_modprobe_conffile
         if command -v wlanpi-usb-gadget >/dev/null 2>&1; then
             wlanpi-usb-gadget bootcfg ensure || true
         fi
