@@ -1,3 +1,12 @@
+wlanpi-usb-gadget (0.5.5) trixie; urgency=medium
+
+  * Fix member .network KeepMaster=yes (F1), postinst rc-state rm -f
+    without nested dpkg (F2), version consistency 0.5.5 (F3), deferred
+    upgrade re-apply via monitor (N1), Kind=bridge on bridge [Match]
+    (N4), and unconditional networkd write on unchanged apply (N3).
+
+ -- WLAN Pi Team <maintainers@wlanpi.com>  Tue, 17 Nov 2026 18:17:58 +0000
+
 wlanpi-usb-gadget (0.5.4) trixie; urgency=medium
 
   * Fix networkd bridge EEXIST failure (stop pre-creating bridge with

@@ -6,6 +6,7 @@ import os
 import select
 import signal
 import socket
+import subprocess
 import time
 from pathlib import Path
 
@@ -58,6 +59,36 @@ from wlanpi_usb_gadget.udc import (
 )
 
 SAFETY_POLL_MS = 10000
+DEFAULT_REAPPLY_FLAG_PATH = Path("/run/wlanpi-usb-gadget/reapply-pending")
+
+
+def _consume_reapply_flag(flag_path: Path | None = None) -> bool:
+    """If postinst scheduled an upgrade re-apply, consume the flag and run apply."""
+    target = DEFAULT_REAPPLY_FLAG_PATH if flag_path is None else flag_path
+    if not target.exists():
+        return False
+    try:
+        target.unlink(missing_ok=True)
+    except OSError:
+        pass
+    log_journal(
+        "Upgrade reapply flag detected; running wlanpi-usb-gadget apply",
+        priority=PRIORITY_INFO,
+        GADGET_EVENT="upgrade_reapply",
+    )
+    proc = subprocess.run(
+        ["/usr/bin/wlanpi-usb-gadget", "apply"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        log_journal(
+            f"Upgrade reapply failed (rc={proc.returncode}): {proc.stderr.strip()}",
+            priority=PRIORITY_WARNING,
+            GADGET_EVENT="upgrade_reapply_error",
+        )
+    return True
 
 
 def sd_notify(message: str) -> None:
@@ -204,6 +235,8 @@ def run_monitor() -> int:
 
     _open_udc_fd()
     sd_notify("READY=1")
+    if _consume_reapply_flag() and udc_fd is None:
+        _open_udc_fd()
     last_tick = time.monotonic()
     last_udc_state = ""
     suppress_attach_until = 0.0

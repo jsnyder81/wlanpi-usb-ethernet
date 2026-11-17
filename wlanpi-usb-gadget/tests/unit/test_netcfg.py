@@ -29,13 +29,19 @@ class TestNetcfg(unittest.TestCase):
         self.assertIn("50-wlanpi-usb-gadget-member-usbecm0.network", files)
         self.assertIn("50-wlanpi-usb-gadget.link", files)
 
-        ecm_net = files["50-wlanpi-usb-gadget-member-usbecm0.network"]
-        self.assertNotIn("Bridge=", ecm_net)
-        self.assertIn("ConfigureWithoutCarrier=yes", ecm_net)
-        self.assertIn("LinkLocalAddressing=no", ecm_net)
-        self.assertIn("IPv6AcceptRA=no", ecm_net)
+        for member in (
+            "50-wlanpi-usb-gadget-member-usbecm0.network",
+            "50-wlanpi-usb-gadget-member-usbrndis0.network",
+        ):
+            member_net = files[member]
+            self.assertNotIn("Bridge=", member_net)
+            self.assertIn("KeepMaster=yes", member_net)
+            self.assertIn("ConfigureWithoutCarrier=yes", member_net)
+            self.assertIn("LinkLocalAddressing=no", member_net)
+            self.assertIn("IPv6AcceptRA=no", member_net)
 
         br_net = files["50-wlanpi-usb-gadget-bridge.network"]
+        self.assertIn("Kind=bridge", br_net)
         self.assertIn("Address=198.18.42.1/24", br_net)
         self.assertIn("Address=169.254.42.1/16", br_net)
         self.assertIn("Address=fe80::1/64", br_net)

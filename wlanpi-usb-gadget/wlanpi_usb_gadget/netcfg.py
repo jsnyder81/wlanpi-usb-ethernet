@@ -47,10 +47,12 @@ def render_networkd_files(
     files: dict[str, str] = {}
 
     # 1. Bridge .network (systemd 257-safe: no KeepConfiguration= or IPForward=)
+    #    Kind=bridge prevents matching a function netdev briefly named usb0 in the fallback path.
     pool_offset, pool_size = _compute_dhcp_pool(cfg.interface)
     network_lines = [
         "[Match]",
         f"Name={cfg.bridge_name}",
+        "Kind=bridge",
         "",
         "[Network]",
         f"Address={cfg.address}",
@@ -96,12 +98,19 @@ def render_networkd_files(
                     if resolved != cfg.bridge_name and resolved not in ifnames:
                         ifnames.append(resolved)
 
+    # KeepMaster=yes is required: in systemd-networkd's link_request_to_set_master()
+    # (src/network/networkd-setlink.c), if neither KeepMaster=yes nor Bridge= (or Bond=/VRF=)
+    # is set and master_ifindex != 0, networkd unsets the master (IFLA_MASTER=0) on every
+    # link_configure(). We do not use Bridge= because without a .netdev file networkd ignores
+    # Bridge= for an unmanaged netdev; KeepMaster=yes keeps enslave_and_up_bridge() as the
+    # single source of truth.
     for ifname in ifnames:
         files[f"{FILE_PREFIX}-member-{ifname}.network"] = (
             "[Match]\n"
             f"Name={ifname}\n"
             "Kind=!bridge\n\n"
             "[Network]\n"
+            "KeepMaster=yes\n"
             "ConfigureWithoutCarrier=yes\n"
             "LinkLocalAddressing=no\n"
             "IPv6AcceptRA=no\n"

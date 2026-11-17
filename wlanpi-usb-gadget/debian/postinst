@@ -1,13 +1,13 @@
 #!/bin/sh
 set -e
 
-_purge_or_remove_legacy_conffile() {
+_remove_legacy_conffile() {
     conffile="$1"
     pkg_status="$(dpkg-query -W -f='${Status}\n' wlanpi-usb-ethernet 2>/dev/null || true)"
     case "$pkg_status" in
         *"config-files"*|*"deinstall"*)
-            echo "wlanpi-usb-gadget: purging residual wlanpi-usb-ethernet conffile $conffile" >&2
-            dpkg --purge wlanpi-usb-ethernet >/dev/null 2>&1 || true
+            echo "wlanpi-usb-gadget: removing residual wlanpi-usb-ethernet conffile $conffile" >&2
+            rm -f "$conffile"
             ;;
         ""|*"not-installed"*)
             echo "wlanpi-usb-gadget: removing orphaned legacy conffile $conffile" >&2
@@ -15,8 +15,14 @@ _purge_or_remove_legacy_conffile() {
             ;;
         *)
             echo "wlanpi-usb-gadget: wlanpi-usb-ethernet status '$pkg_status'; leaving $conffile" >&2
+            return 0
             ;;
     esac
+    if [ -e "$conffile" ]; then
+        echo "wlanpi-usb-gadget: warning: $conffile still exists after removal" >&2
+    else
+        echo "wlanpi-usb-gadget: removed $conffile" >&2
+    fi
 }
 
 cleanup_legacy_modprobe_conffile() {
@@ -32,7 +38,7 @@ cleanup_legacy_modprobe_conffile() {
         return 0
     fi
 
-    _purge_or_remove_legacy_conffile "$conffile"
+    _remove_legacy_conffile "$conffile"
 }
 
 cleanup_legacy_networkd_conffiles() {
@@ -52,8 +58,21 @@ cleanup_legacy_networkd_conffiles() {
             continue
         fi
 
-        _purge_or_remove_legacy_conffile "$conffile"
+        _remove_legacy_conffile "$conffile"
     done
+}
+
+schedule_upgrade_reapply() {
+    old_ver="${1:-}"
+    reapply_flag="${WLANPI_REAPPLY_FLAG:-/run/wlanpi-usb-gadget/reapply-pending}"
+    systemd_run_dir="${WLANPI_SYSTEMD_RUN_DIR:-/run/systemd/system}"
+    # Setup unit is Type=oneshot with RemainAfterExit=yes and --no-restart-after-upgrade,
+    # so dh_installsystemd will not re-run it on upgrade. Flag the monitor (restarted by
+    # #DEBHELPER#) to perform a deferred apply once it starts.
+    if [ -n "$old_ver" ] && [ -z "${DPKG_ROOT:-}" ] && [ -d "$systemd_run_dir" ]; then
+        mkdir -p "$(dirname "$reapply_flag")"
+        touch "$reapply_flag"
+    fi
 }
 
 case "$1" in
@@ -61,6 +80,7 @@ case "$1" in
         mkdir -p /var/lib/wlanpi-usb-gadget /run/wlanpi-usb-gadget
         cleanup_legacy_modprobe_conffile
         cleanup_legacy_networkd_conffiles
+        schedule_upgrade_reapply "${2:-}"
         if command -v wlanpi-usb-gadget >/dev/null 2>&1; then
             wlanpi-usb-gadget bootcfg ensure || true
         fi

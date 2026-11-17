@@ -88,8 +88,12 @@ def _cmd_apply(force: bool) -> int:
         ensure_bridge_exists(cfg.bridge_name, macs.bridge)
         actual_ifnames = discover_member_ifnames(bridge_name=cfg.bridge_name)
         enslave_and_up_bridge(cfg.bridge_name, actual_ifnames)
-        if actual_ifnames:
-            write_networkd_files(cfg, prof, macs.bridge, member_ifnames=actual_ifnames)
+        write_networkd_files(
+            cfg,
+            prof,
+            macs.bridge,
+            member_ifnames=actual_ifnames or None,
+        )
         reload_networkd()
         log_journal(
             f"apply {res} profile={profile_name} udc={udc_name} dwc2={ctrl.dwc2_mode}",

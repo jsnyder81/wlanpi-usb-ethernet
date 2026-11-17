@@ -126,6 +126,30 @@ class TestMonitorLoop(unittest.TestCase):
         self.assertLess(order.index("ensure_bridge"), order.index("enslave_bridge"))
         self.assertLess(order.index("enslave_bridge"), order.index("reload_netd"))
 
+    def test_consume_reapply_flag_runs_apply_and_removes_flag(self) -> None:
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmp:
+            flag = Path(tmp) / "reapply-pending"
+
+            with mock.patch.object(monitor.subprocess, "run") as mock_run:
+                self.assertFalse(monitor._consume_reapply_flag(flag))
+                mock_run.assert_not_called()
+
+            flag.write_text("", encoding="utf-8")
+            with (
+                mock.patch.object(monitor, "log_journal"),
+                mock.patch.object(
+                    monitor.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess(["wlanpi-usb-gadget", "apply"], 0, "", ""),
+                ) as mock_run,
+            ):
+                self.assertTrue(monitor._consume_reapply_flag(flag))
+                self.assertFalse(flag.exists())
+                mock_run.assert_called_once()
+                self.assertEqual(mock_run.call_args[0][0], ["/usr/bin/wlanpi-usb-gadget", "apply"])
+
 
 if __name__ == "__main__":
     unittest.main()
