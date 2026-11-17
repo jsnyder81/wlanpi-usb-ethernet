@@ -13,3 +13,13 @@
   grep -q "Conflicts: wlanpi-usb-ethernet" "${BATS_TEST_DIRNAME}/../../debian/control"
   grep -q "Replaces: wlanpi-usb-ethernet" "${BATS_TEST_DIRNAME}/../../debian/control"
 }
+
+@test "legacy composite gadget modules are blacklisted in /usr/lib/modprobe.d" {
+  local conf="${BATS_TEST_DIRNAME}/../../modprobe/wlanpi-usb-gadget.conf"
+  [ -f "$conf" ]
+  grep -q "modprobe/wlanpi-usb-gadget.conf /usr/lib/modprobe.d/" "${BATS_TEST_DIRNAME}/../../debian/install"
+  for mod in g_ether g_ncm g_cdc g_serial; do
+    grep -q "^blacklist ${mod}$" "$conf"
+    grep -q "^install ${mod} /bin/false$" "$conf"
+  done
+}

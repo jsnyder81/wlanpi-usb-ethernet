@@ -1,3 +1,13 @@
+wlanpi-usb-gadget (0.5.2) trixie; urgency=medium
+
+  * Fix g_ether auto-bind race: build complete configfs tree before
+    modprobe dwc2, ship /usr/lib/modprobe.d/wlanpi-usb-gadget.conf
+    blacklisting legacy g_* composite modules, reclaim legacy UDC
+    holders on EBUSY, check foreign gadgets before bridge setup (N1),
+    and log ip link failures (N2).
+
+ -- WLAN Pi Team <maintainers@wlanpi.com>  Tue, 17 Nov 2026 05:14:05 +0000
+
 wlanpi-usb-gadget (0.5.1) trixie; urgency=medium
 
   * Fix ifname %d patterns for u_ether (usbrndis%d/usbecm%d/usbncm%d),

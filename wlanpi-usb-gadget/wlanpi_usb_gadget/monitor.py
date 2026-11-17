@@ -124,15 +124,20 @@ def _execute_recovery_action(
         serial, _ = read_board_serial()
         prof = get_profile(profile_name, serial_console=cfg.serial_console)
         plan = plan_gadget_tree(prof, macs, serial)
-        write_networkd_files(cfg, prof, macs.bridge)
-        ensure_bridge_exists(cfg.bridge_name, macs.bridge)
-        reload_networkd()
         try:
-            apply_gadget(plan, udc_name, force=True)
+            apply_gadget(
+                plan,
+                udc_name,
+                force=True,
+                before_bind=lambda: (
+                    write_networkd_files(cfg, prof, macs.bridge),
+                    ensure_bridge_exists(cfg.bridge_name, macs.bridge),
+                ),
+            )
             actual = discover_member_ifnames(bridge_name=cfg.bridge_name)
             if actual:
                 write_networkd_files(cfg, prof, macs.bridge, member_ifnames=actual)
-                reload_networkd()
+            reload_networkd()
             recovery.last_bind_succeeded = True
         except Exception:
             recovery.last_bind_succeeded = False

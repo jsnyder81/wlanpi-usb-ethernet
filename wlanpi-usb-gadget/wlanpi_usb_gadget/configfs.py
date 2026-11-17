@@ -7,13 +7,14 @@ import fcntl
 import hashlib
 import json
 import os
+import subprocess
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from wlanpi_usb_gadget.events import record_event
-from wlanpi_usb_gadget.journal import PRIORITY_INFO, PRIORITY_WARNING, log_journal
+from wlanpi_usb_gadget.journal import PRIORITY_ERR, PRIORITY_INFO, PRIORITY_WARNING, log_journal
 from wlanpi_usb_gadget.mac import DerivedMacs
 from wlanpi_usb_gadget.profiles import (
     MANUFACTURER,
@@ -25,11 +26,13 @@ from wlanpi_usb_gadget.profiles import (
 
 GADGET_NAME = "wlanpi-usb-gadget"
 LEGACY_GADGET_NAME = "wlanpi"
+LEGACY_GADGET_MODULES = frozenset({"g_ether", "g_ncm", "g_cdc", "g_serial", "g_multi", "g_ffs"})
 DEFAULT_CONFIGFS_ROOT = Path("/sys/kernel/config/usb_gadget")
 DEFAULT_LOCK_PATH = Path("/run/wlanpi-usb-gadget/configfs.lock")
 DEFAULT_HASH_PATH = Path("/run/wlanpi-usb-gadget/gadget.hash")
 DEFAULT_FIRST_BIND_MARKER = Path("/var/lib/wlanpi-usb-gadget/first_bind_done")
 DEFAULT_SYS_CLASS_NET = Path("/sys/class/net")
+DEFAULT_UDC_CLASS_DIR = Path("/sys/class/udc")
 
 
 class ConfigfsError(RuntimeError):
@@ -352,9 +355,80 @@ def discover_member_ifnames(
     return found
 
 
-def apply_gadget(
-    plan: PlannedGadget,
+def read_udc_holder(udc_name: str, udc_class_dir: Path = DEFAULT_UDC_CLASS_DIR) -> str:
+    """Return the driver/gadget name currently holding `udc_name`, or empty string."""
+    udc_dir = udc_class_dir / udc_name
+    for attr in ("current_drivers", "function"):
+        p = udc_dir / attr
+        if p.exists():
+            try:
+                val = p.read_text(encoding="utf-8", errors="ignore").strip()
+                if val:
+                    return val.splitlines()[0].strip()
+            except OSError:
+                pass
+    drv = udc_dir / "device" / "driver"
+    if drv.is_symlink():
+        try:
+            return drv.resolve().name
+        except OSError:
+            pass
+    return ""
+
+
+def _reclaim_legacy_udc(
     udc_name: str,
+    holder: str,
+    *,
+    udc_class_dir: Path = DEFAULT_UDC_CLASS_DIR,
+) -> None:
+    """Unbind a legacy composite gadget module (e.g. g_ether) from the UDC and rmmod it."""
+    udc_attr = udc_class_dir / udc_name / "UDC"
+    if udc_attr.exists():
+        write_attr(udc_attr, "")
+    subprocess.run(["rmmod", holder], capture_output=True, text=True, check=False)
+    log_journal(
+        f"Reclaimed UDC '{udc_name}' from legacy gadget module '{holder}'",
+        priority=PRIORITY_WARNING,
+        GADGET_EVENT="udc_reclaimed",
+    )
+    record_event("udc_reclaimed", udc_state="busy", detail=f"reclaimed {udc_name} from {holder}")
+
+
+def check_and_clear_foreign_gadget(
+    *,
+    gadget_name: str = GADGET_NAME,
+    udc_name: str | None = None,
+    configfs_root: Path = DEFAULT_CONFIGFS_ROOT,
+    first_bind_marker: Path = DEFAULT_FIRST_BIND_MARKER,
+) -> None:
+    """Check for foreign configfs gadgets; tear down legacy 'wlanpi' once on fresh install."""
+    is_fake = configfs_root != DEFAULT_CONFIGFS_ROOT
+    foreign = find_foreign_gadget(configfs_root=configfs_root, own_name=gadget_name, udc_name=udc_name)
+    if not foreign:
+        return
+    if foreign == LEGACY_GADGET_NAME and not first_bind_marker.exists():
+        legacy_dir = configfs_root / LEGACY_GADGET_NAME
+        udc_file = legacy_dir / "UDC"
+        if udc_file.exists() and read_bound_udc(legacy_dir):
+            write_attr(udc_file, "")
+        _teardown_unlocked(legacy_dir, is_fake=is_fake)
+        log_journal(
+            f"Tore down leftover legacy gadget '{LEGACY_GADGET_NAME}' on first install",
+            priority=PRIORITY_INFO,
+            GADGET_EVENT="legacy_gadget_teardown",
+        )
+        record_event("legacy_gadget_teardown", detail=f"removed {LEGACY_GADGET_NAME}")
+        return
+    raise ForeignGadgetError(
+        f"Another gadget '{foreign}' is already bound"
+        + (f" to UDC '{udc_name}'" if udc_name else "")
+        + "; refusing to proceed"
+    )
+
+
+def build_gadget_tree(
+    plan: PlannedGadget,
     *,
     force: bool = False,
     gadget_name: str = GADGET_NAME,
@@ -363,27 +437,17 @@ def apply_gadget(
     lock_path: Path = DEFAULT_LOCK_PATH,
     first_bind_marker: Path = DEFAULT_FIRST_BIND_MARKER,
 ) -> str:
-    """Apply a PlannedGadget to configfs and bind UDC. Returns 'unchanged' or 'applied'."""
+    """Build the complete configfs gadget tree BEFORE loading dwc2 or binding UDC.
+
+    Returns 'unchanged' if already bound with matching hash (and not force), else 'built'.
+    """
     is_fake = configfs_root != DEFAULT_CONFIGFS_ROOT
     with configfs_lock(lock_path):
-        foreign = find_foreign_gadget(configfs_root=configfs_root, own_name=gadget_name, udc_name=udc_name)
-        if foreign:
-            if foreign == LEGACY_GADGET_NAME and not first_bind_marker.exists():
-                legacy_dir = configfs_root / LEGACY_GADGET_NAME
-                udc_file = legacy_dir / "UDC"
-                if udc_file.exists() and read_bound_udc(legacy_dir):
-                    write_attr(udc_file, "")
-                _teardown_unlocked(legacy_dir, is_fake=is_fake)
-                log_journal(
-                    f"Tore down leftover legacy gadget '{LEGACY_GADGET_NAME}' on first install",
-                    priority=PRIORITY_INFO,
-                    GADGET_EVENT="legacy_gadget_teardown",
-                )
-                record_event("legacy_gadget_teardown", detail=f"removed {LEGACY_GADGET_NAME} from {udc_name}")
-            else:
-                raise ForeignGadgetError(
-                    f"Another gadget '{foreign}' is already bound to UDC '{udc_name}'; refusing to proceed"
-                )
+        check_and_clear_foreign_gadget(
+            gadget_name=gadget_name,
+            configfs_root=configfs_root,
+            first_bind_marker=first_bind_marker,
+        )
 
         gadget_dir = configfs_root / gadget_name
         if (
@@ -391,13 +455,12 @@ def apply_gadget(
             and gadget_dir.exists()
             and hash_path.exists()
             and hash_path.read_text(encoding="utf-8").strip() == plan.tree_hash
-            and read_bound_udc(gadget_dir) == udc_name
+            and read_bound_udc(gadget_dir)
         ):
             return "unchanged"
 
         # Clean any existing/partial tree before building
         if gadget_dir.exists():
-            # Inline teardown without re-acquiring lock
             udc_file = gadget_dir / "UDC"
             if udc_file.exists() and read_bound_udc(gadget_dir):
                 write_attr(udc_file, "")
@@ -433,7 +496,45 @@ def apply_gadget(
             except OSError as exc:
                 raise ConfigfsError(f"Failed creating symlink {link_path} -> {target_path}: {exc}") from exc
 
-        write_attr(gadget_dir / "UDC", udc_name)
+        return "built"
+
+
+def bind_gadget_udc(
+    plan: PlannedGadget,
+    udc_name: str,
+    *,
+    gadget_name: str = GADGET_NAME,
+    configfs_root: Path = DEFAULT_CONFIGFS_ROOT,
+    hash_path: Path = DEFAULT_HASH_PATH,
+    lock_path: Path = DEFAULT_LOCK_PATH,
+    first_bind_marker: Path = DEFAULT_FIRST_BIND_MARKER,
+    udc_class_dir: Path = DEFAULT_UDC_CLASS_DIR,
+) -> str:
+    """Bind the already-built configfs gadget to `udc_name`, reclaiming legacy g_ether on EBUSY."""
+    with configfs_lock(lock_path):
+        gadget_dir = configfs_root / gadget_name
+        udc_file = gadget_dir / "UDC"
+        try:
+            write_attr(udc_file, udc_name)
+        except ConfigfsError as exc:
+            cause = exc.__cause__
+            if not (isinstance(cause, OSError) and cause.errno == errno.EBUSY):
+                raise
+            holder = read_udc_holder(udc_name, udc_class_dir=udc_class_dir)
+            if holder in LEGACY_GADGET_MODULES:
+                _reclaim_legacy_udc(udc_name, holder, udc_class_dir=udc_class_dir)
+                write_attr(udc_file, udc_name)
+            else:
+                desc = holder or "unknown holder"
+                log_journal(
+                    f"UDC '{udc_name}' busy (held by {desc}); refusing to disturb",
+                    priority=PRIORITY_ERR,
+                    GADGET_EVENT="udc_busy",
+                )
+                record_event("udc_busy", udc_state="busy", detail=f"{udc_name} held by {desc}")
+                raise ForeignGadgetError(
+                    f"UDC '{udc_name}' is busy (held by {desc}); refusing to proceed"
+                ) from exc
 
         hash_path.parent.mkdir(parents=True, exist_ok=True)
         hash_path.write_text(f"{plan.tree_hash}\n", encoding="utf-8")
@@ -441,3 +542,42 @@ def apply_gadget(
             first_bind_marker.parent.mkdir(parents=True, exist_ok=True)
             first_bind_marker.write_text("1\n", encoding="utf-8")
         return "applied"
+
+
+def apply_gadget(
+    plan: PlannedGadget,
+    udc_name: str,
+    *,
+    force: bool = False,
+    gadget_name: str = GADGET_NAME,
+    configfs_root: Path = DEFAULT_CONFIGFS_ROOT,
+    hash_path: Path = DEFAULT_HASH_PATH,
+    lock_path: Path = DEFAULT_LOCK_PATH,
+    first_bind_marker: Path = DEFAULT_FIRST_BIND_MARKER,
+    udc_class_dir: Path = DEFAULT_UDC_CLASS_DIR,
+    before_bind: Callable[[], None] | None = None,
+) -> str:
+    """Build configfs tree, run optional `before_bind` hook (e.g. load dwc2), then bind UDC."""
+    status = build_gadget_tree(
+        plan,
+        force=force,
+        gadget_name=gadget_name,
+        configfs_root=configfs_root,
+        hash_path=hash_path,
+        lock_path=lock_path,
+        first_bind_marker=first_bind_marker,
+    )
+    if status == "unchanged":
+        return "unchanged"
+    if before_bind is not None:
+        before_bind()
+    return bind_gadget_udc(
+        plan,
+        udc_name,
+        gadget_name=gadget_name,
+        configfs_root=configfs_root,
+        hash_path=hash_path,
+        lock_path=lock_path,
+        first_bind_marker=first_bind_marker,
+        udc_class_dir=udc_class_dir,
+    )

@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from wlanpi_usb_gadget.config import GadgetConfig
+from wlanpi_usb_gadget.journal import PRIORITY_WARNING, log_journal
 from wlanpi_usb_gadget.profiles import ProfileSpec
 
 DEFAULT_NETWORK_DIR = Path("/run/systemd/network")
@@ -175,18 +176,38 @@ def ensure_bridge_exists(
         if (iface_dir / "bridge").exists():
             return
         # A non-bridge netdev occupies bridge_name (e.g. leftover usb0); move it aside.
-        subprocess.run(["ip", "link", "set", "dev", bridge_name, "down"], capture_output=True, check=False)
-        subprocess.run(
+        r1 = subprocess.run(["ip", "link", "set", "dev", bridge_name, "down"], capture_output=True, text=True, check=False)
+        if r1.returncode != 0:
+            log_journal(
+                f"ip link set {bridge_name} down failed (rc={r1.returncode}): {r1.stderr.strip()}",
+                priority=PRIORITY_WARNING,
+                GADGET_EVENT="bridge_setup_warn",
+            )
+        r2 = subprocess.run(
             ["ip", "link", "set", "dev", bridge_name, "name", "usbgadget0"],
             capture_output=True,
+            text=True,
             check=False,
         )
+        if r2.returncode != 0:
+            log_journal(
+                f"ip link rename {bridge_name}->usbgadget0 failed (rc={r2.returncode}): {r2.stderr.strip()}",
+                priority=PRIORITY_WARNING,
+                GADGET_EVENT="bridge_setup_warn",
+            )
 
-    subprocess.run(
+    r3 = subprocess.run(
         ["ip", "link", "add", "name", bridge_name, "address", bridge_mac, "type", "bridge", "stp_state", "0"],
         capture_output=True,
+        text=True,
         check=False,
     )
+    if r3.returncode != 0:
+        log_journal(
+            f"ip link add bridge {bridge_name} failed (rc={r3.returncode}): {r3.stderr.strip()}",
+            priority=PRIORITY_WARNING,
+            GADGET_EVENT="bridge_setup_warn",
+        )
 
 
 def reload_networkd() -> None:

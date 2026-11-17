@@ -9,7 +9,8 @@ import sys
 from wlanpi_usb_gadget.bootcfg import check_bootcfg, ensure_bootcfg, remove_bootcfg
 from wlanpi_usb_gadget.config import ConfigError, load_config
 from wlanpi_usb_gadget.configfs import (
-    apply_gadget,
+    bind_gadget_udc,
+    build_gadget_tree,
     discover_member_ifnames,
     plan_gadget_tree,
     teardown_gadget,
@@ -58,20 +59,34 @@ def _cmd_apply(force: bool) -> int:
         prof = get_profile(profile_name, serial_console=cfg.serial_console)
         macs = derive_all_macs()
         serial, _ = read_board_serial()
-        write_networkd_files(cfg, prof, macs.bridge)
-        ensure_bridge_exists(cfg.bridge_name, macs.bridge)
-        reload_networkd()
 
+        # 1. Load libcomposite and build the COMPLETE configfs tree BEFORE loading dwc2.
+        #    Pre-registering configfs prevents the kernel's usb_udc modalias uevent
+        #    from auto-binding legacy g_ether when dwc2 registers the UDC.
         ensure_kernel_module("libcomposite")
-        if ctrl.dwc2_mode in ("not_loaded", "module"):
-            ensure_kernel_module("dwc2")
-        udc_name = wait_for_udc(timeout_sec=5.0)
         plan = plan_gadget_tree(prof, macs, serial)
-        res = apply_gadget(plan, udc_name, force=force)
+        build_status = build_gadget_tree(plan, force=force)
+
+        if build_status == "unchanged":
+            res = "unchanged"
+            udc_name = wait_for_udc(timeout_sec=5.0)
+        else:
+            # 2. Now load dwc2 and wait for the UDC.
+            if ctrl.dwc2_mode in ("not_loaded", "module"):
+                ensure_kernel_module("dwc2")
+            udc_name = wait_for_udc(timeout_sec=5.0)
+
+            # 3. Prepare networkd + bridge usb0 AFTER foreign-gadget check and BEFORE UDC bind.
+            write_networkd_files(cfg, prof, macs.bridge)
+            ensure_bridge_exists(cfg.bridge_name, macs.bridge)
+
+            # 4. Bind UDC (reclaims legacy g_ether on EBUSY; refuses other holders).
+            res = bind_gadget_udc(plan, udc_name)
+
         actual_ifnames = discover_member_ifnames(bridge_name=cfg.bridge_name)
         if actual_ifnames:
             write_networkd_files(cfg, prof, macs.bridge, member_ifnames=actual_ifnames)
-            reload_networkd()
+        reload_networkd()
         log_journal(
             f"apply {res} profile={profile_name} udc={udc_name} dwc2={ctrl.dwc2_mode}",
             priority=PRIORITY_INFO,
