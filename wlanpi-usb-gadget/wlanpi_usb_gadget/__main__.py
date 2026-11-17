@@ -8,7 +8,12 @@ import sys
 
 from wlanpi_usb_gadget.bootcfg import check_bootcfg, ensure_bootcfg, remove_bootcfg
 from wlanpi_usb_gadget.config import ConfigError, load_config
-from wlanpi_usb_gadget.configfs import apply_gadget, plan_gadget_tree, teardown_gadget
+from wlanpi_usb_gadget.configfs import (
+    apply_gadget,
+    discover_member_ifnames,
+    plan_gadget_tree,
+    teardown_gadget,
+)
 from wlanpi_usb_gadget.deadman import (
     commit_trial,
     load_profile_state,
@@ -57,6 +62,10 @@ def _cmd_apply(force: bool) -> int:
         udc_name = wait_for_udc(timeout_sec=5.0)
         plan = plan_gadget_tree(prof, macs, serial)
         res = apply_gadget(plan, udc_name, force=force)
+        actual_ifnames = discover_member_ifnames(bridge_name=cfg.bridge_name)
+        if actual_ifnames:
+            write_networkd_files(cfg, prof, macs.bridge, member_ifnames=actual_ifnames)
+            reload_networkd()
         log_journal(
             f"apply {res} profile={profile_name} udc={udc_name} dwc2={ctrl.dwc2_mode}",
             priority=PRIORITY_INFO,

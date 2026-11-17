@@ -14,6 +14,7 @@ from wlanpi_usb_gadget.configfs import (
     DEFAULT_CONFIGFS_ROOT,
     GADGET_NAME,
     apply_gadget,
+    discover_member_ifnames,
     plan_gadget_tree,
     read_bound_udc,
     teardown_gadget,
@@ -68,7 +69,13 @@ def sd_notify(message: str) -> None:
         pass
 
 
-def _read_carrier_ifaces(names: tuple[str, ...] = ("usbncm0", "usbecm0", "usbrndis0")) -> tuple[str, ...]:
+def _read_carrier_ifaces(
+    names: tuple[str, ...] | None = None,
+    bridge_name: str = "usb0",
+) -> tuple[str, ...]:
+    if names is None:
+        discovered = discover_member_ifnames(bridge_name=bridge_name)
+        names = tuple(discovered) if discovered else ("usbncm0", "usbecm0", "usbrndis0")
     up: list[str] = []
     for name in names:
         p = Path("/sys/class/net") / name / "carrier"
@@ -121,6 +128,10 @@ def _execute_recovery_action(
         reload_networkd()
         try:
             apply_gadget(plan, udc_name, force=True)
+            actual = discover_member_ifnames(bridge_name=cfg.bridge_name)
+            if actual:
+                write_networkd_files(cfg, prof, macs.bridge, member_ifnames=actual)
+                reload_networkd()
             recovery.last_bind_succeeded = True
         except Exception:
             recovery.last_bind_succeeded = False

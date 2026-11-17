@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -11,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+from wlanpi_usb_gadget.events import record_event
+from wlanpi_usb_gadget.journal import PRIORITY_INFO, PRIORITY_WARNING, log_journal
 from wlanpi_usb_gadget.mac import DerivedMacs
 from wlanpi_usb_gadget.profiles import (
     MANUFACTURER,
@@ -21,9 +24,12 @@ from wlanpi_usb_gadget.profiles import (
 )
 
 GADGET_NAME = "wlanpi-usb-gadget"
+LEGACY_GADGET_NAME = "wlanpi"
 DEFAULT_CONFIGFS_ROOT = Path("/sys/kernel/config/usb_gadget")
 DEFAULT_LOCK_PATH = Path("/run/wlanpi-usb-gadget/configfs.lock")
 DEFAULT_HASH_PATH = Path("/run/wlanpi-usb-gadget/gadget.hash")
+DEFAULT_FIRST_BIND_MARKER = Path("/var/lib/wlanpi-usb-gadget/first_bind_done")
+DEFAULT_SYS_CLASS_NET = Path("/sys/class/net")
 
 
 class ConfigfsError(RuntimeError):
@@ -287,6 +293,65 @@ def teardown_gadget(
         return True
 
 
+def discover_member_ifnames(
+    *,
+    gadget_name: str = GADGET_NAME,
+    configfs_root: Path = DEFAULT_CONFIGFS_ROOT,
+    sys_class_net: Path = DEFAULT_SYS_CLASS_NET,
+    bridge_name: str = "usb0",
+) -> list[str]:
+    """Discover actual netdev names for Ethernet functions (works when ifname is EINVAL)."""
+    found: list[str] = []
+    gadget_dir = configfs_root / gadget_name
+
+    # 1. Read functions/<kind>.<inst>/ifname from configfs (kernel populates actual name)
+    functions_dir = gadget_dir / "functions"
+    if functions_dir.exists():
+        for fn_dir in sorted(functions_dir.iterdir()):
+            if not fn_dir.is_dir():
+                continue
+            kind = fn_dir.name.split(".", 1)[0]
+            if kind not in ("rndis", "ecm", "ncm"):
+                continue
+            ifname_file = fn_dir / "ifname"
+            if ifname_file.exists():
+                try:
+                    val = ifname_file.read_text(encoding="utf-8", errors="ignore").strip()
+                    if val and val != bridge_name and val not in found:
+                        found.append(val)
+                except OSError:
+                    pass
+
+    # 2. Cross-check /sys/class/net/*/device for gadget netdevs (e.g. usb0/usb1/usbncm0)
+    if sys_class_net.exists():
+        for iface_dir in sorted(sys_class_net.iterdir()):
+            name = iface_dir.name
+            if name == bridge_name or (iface_dir / "bridge").exists():
+                continue
+            dev_link = iface_dir / "device"
+            if not dev_link.exists():
+                continue
+            try:
+                resolved = str(dev_link.resolve())
+            except OSError:
+                continue
+            is_gadget_dev = False
+            uevent = dev_link / "uevent"
+            if uevent.exists():
+                try:
+                    utext = uevent.read_text(encoding="utf-8", errors="ignore")
+                    if "gadget" in utext or "g_ether" in utext:
+                        is_gadget_dev = True
+                except OSError:
+                    pass
+            if "gadget" in resolved or "udc" in resolved:
+                is_gadget_dev = True
+            if is_gadget_dev and name not in found:
+                found.append(name)
+
+    return found
+
+
 def apply_gadget(
     plan: PlannedGadget,
     udc_name: str,
@@ -296,14 +361,29 @@ def apply_gadget(
     configfs_root: Path = DEFAULT_CONFIGFS_ROOT,
     hash_path: Path = DEFAULT_HASH_PATH,
     lock_path: Path = DEFAULT_LOCK_PATH,
+    first_bind_marker: Path = DEFAULT_FIRST_BIND_MARKER,
 ) -> str:
     """Apply a PlannedGadget to configfs and bind UDC. Returns 'unchanged' or 'applied'."""
+    is_fake = configfs_root != DEFAULT_CONFIGFS_ROOT
     with configfs_lock(lock_path):
         foreign = find_foreign_gadget(configfs_root=configfs_root, own_name=gadget_name, udc_name=udc_name)
         if foreign:
-            raise ForeignGadgetError(
-                f"Another gadget '{foreign}' is already bound to UDC '{udc_name}'; refusing to proceed"
-            )
+            if foreign == LEGACY_GADGET_NAME and not first_bind_marker.exists():
+                legacy_dir = configfs_root / LEGACY_GADGET_NAME
+                udc_file = legacy_dir / "UDC"
+                if udc_file.exists() and read_bound_udc(legacy_dir):
+                    write_attr(udc_file, "")
+                _teardown_unlocked(legacy_dir, is_fake=is_fake)
+                log_journal(
+                    f"Tore down leftover legacy gadget '{LEGACY_GADGET_NAME}' on first install",
+                    priority=PRIORITY_INFO,
+                    GADGET_EVENT="legacy_gadget_teardown",
+                )
+                record_event("legacy_gadget_teardown", detail=f"removed {LEGACY_GADGET_NAME} from {udc_name}")
+            else:
+                raise ForeignGadgetError(
+                    f"Another gadget '{foreign}' is already bound to UDC '{udc_name}'; refusing to proceed"
+                )
 
         gadget_dir = configfs_root / gadget_name
         if (
@@ -321,7 +401,7 @@ def apply_gadget(
             udc_file = gadget_dir / "UDC"
             if udc_file.exists() and read_bound_udc(gadget_dir):
                 write_attr(udc_file, "")
-            _teardown_unlocked(gadget_dir, is_fake=(configfs_root != DEFAULT_CONFIGFS_ROOT))
+            _teardown_unlocked(gadget_dir, is_fake=is_fake)
 
         for rel_dir in plan.dirs:
             target_dir = gadget_dir / rel_dir if rel_dir else gadget_dir
@@ -330,7 +410,19 @@ def apply_gadget(
         for rel_attr, value in plan.attrs:
             attr_path = gadget_dir / rel_attr
             attr_path.parent.mkdir(parents=True, exist_ok=True)
-            write_attr(attr_path, value)
+            try:
+                write_attr(attr_path, value)
+            except ConfigfsError as exc:
+                cause = exc.__cause__
+                if rel_attr.endswith("/ifname") and isinstance(cause, OSError) and cause.errno == errno.EINVAL:
+                    log_journal(
+                        f"Kernel rejected {rel_attr}={value!r} (EINVAL); using kernel-assigned name",
+                        priority=PRIORITY_WARNING,
+                        GADGET_EVENT="ifname_unsupported",
+                    )
+                    record_event("ifname_unsupported", profile=plan.profile_name, detail=f"{rel_attr}={value}")
+                    continue
+                raise
 
         for link_rel, target_rel in plan.symlinks:
             link_path = gadget_dir / link_rel
@@ -345,4 +437,7 @@ def apply_gadget(
 
         hash_path.parent.mkdir(parents=True, exist_ok=True)
         hash_path.write_text(f"{plan.tree_hash}\n", encoding="utf-8")
+        if not first_bind_marker.exists():
+            first_bind_marker.parent.mkdir(parents=True, exist_ok=True)
+            first_bind_marker.write_text("1\n", encoding="utf-8")
         return "applied"

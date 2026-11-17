@@ -33,6 +33,8 @@ def render_networkd_files(
     cfg: GadgetConfig,
     profile: ProfileSpec,
     bridge_mac: str,
+    *,
+    member_ifnames: list[str] | None = None,
 ) -> dict[str, str]:
     """Render all generated .netdev, .network, and .link files as {filename: content}."""
     files: dict[str, str] = {}
@@ -85,15 +87,21 @@ def render_networkd_files(
 
     # 3. Member .network files (one per unique network function ifname)
     ifnames: list[str] = []
-    for c in profile.configs:
-        for fn in c.functions:
-            if fn.ifname and fn.ifname not in ifnames:
-                ifnames.append(fn.ifname)
+    if member_ifnames is not None:
+        for name in member_ifnames:
+            if name and name != cfg.bridge_name and name not in ifnames:
+                ifnames.append(name)
+    else:
+        for c in profile.configs:
+            for fn in c.functions:
+                if fn.ifname and fn.ifname != cfg.bridge_name and fn.ifname not in ifnames:
+                    ifnames.append(fn.ifname)
 
     for ifname in ifnames:
         files[f"{FILE_PREFIX}-member-{ifname}.network"] = (
             "[Match]\n"
-            f"Name={ifname}\n\n"
+            f"Name={ifname}\n"
+            "Kind=!bridge\n\n"
             "[Network]\n"
             f"Bridge={cfg.bridge_name}\n"
             "ConfigureWithoutCarrier=yes\n"
@@ -117,10 +125,12 @@ def write_networkd_files(
     profile: ProfileSpec,
     bridge_mac: str,
     network_dir: Path = DEFAULT_NETWORK_DIR,
+    *,
+    member_ifnames: list[str] | None = None,
 ) -> list[Path]:
     """Write generated networkd files to network_dir and prune stale ones."""
     network_dir.mkdir(parents=True, exist_ok=True)
-    rendered = render_networkd_files(cfg, profile, bridge_mac)
+    rendered = render_networkd_files(cfg, profile, bridge_mac, member_ifnames=member_ifnames)
 
     for existing in network_dir.glob(f"{FILE_PREFIX}*"):
         if existing.name not in rendered:

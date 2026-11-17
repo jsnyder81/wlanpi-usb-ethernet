@@ -16,6 +16,7 @@ from wlanpi_usb_gadget.config import ConfigError, GadgetConfig, load_config
 from wlanpi_usb_gadget.configfs import (
     DEFAULT_CONFIGFS_ROOT,
     GADGET_NAME,
+    discover_member_ifnames,
     find_foreign_gadget,
     read_bound_udc,
 )
@@ -429,7 +430,9 @@ def collect_status(
     udc_state = (read_udc_attr(udc_name, "state") if udc_name else None) or rt.get("udc_state", "unknown")
     udc_speed = (read_udc_attr(udc_name, "current_speed") if udc_name else None) or "UNKNOWN"
 
-    netdevs = [_read_netdev_info(n) for n in ("usbncm0", "usbecm0", "usbrndis0")]
+    discovered = discover_member_ifnames(configfs_root=configfs_root, bridge_name=cfg.bridge_name)
+    candidate_names = list(dict.fromkeys([*discovered, "usbncm0", "usbecm0", "usbrndis0"]))
+    netdevs = [_read_netdev_info(n) for n in candidate_names]
     netdevs = [n for n in netdevs if n.get("present")]
     active_iface = next((n["name"] for n in netdevs if n.get("carrier") == 1), rt.get("active_iface", ""))
 
