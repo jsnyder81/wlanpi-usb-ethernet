@@ -127,7 +127,7 @@ flowchart TB
 1. Load config and resolve the active profile.
 2. Detect the controller (`/sys/bus/platform/drivers/dwc2/*.usb`) and its `dr_mode`. In host mode, log one line and exit 0 with state `HOST_MODE`.
 3. Generate `50-wlanpi-usb-gadget-bridge.network`, `50-wlanpi-usb-gadget-member-*.network`, and `50-wlanpi-usb-gadget.link` into `/run/systemd/network` (no `.netdev` file — see E17: bridge creation and member enslavement happen directly via `ip link` after UDC bind so `systemd-networkd` never hits an `EEXIST` netdev race; networkd owns only the bridge's IP/DHCP). The `50-` prefix sorts ahead of any leftover `usb0.network` from the old package, and `postinst` cleans signature-matched residual `usb0.network`/`usb1.network` conffiles.
-4. Compute a hash of the desired configfs tree. If a gadget with the same hash is already bound, do nothing. This makes `apply` idempotent and safe to call from the monitor or on upgrade.
+4. Compute a hash of the desired configfs tree. If a gadget with the same hash is already bound, skip rebuilding configfs and rebinding the UDC, then still ensure the bridge exists, re-enslave and bring up member interfaces and the bridge, rewrite the `/run/systemd/network` files, and reload `systemd-networkd`. This keeps `apply` idempotent while repairing bridge/networkd state on monitor re-apply or upgrade.
 5. Refuse to proceed if another gadget is bound to the UDC (for example the old package's `usb_gadget/wlanpi`), and say which one.
 6. Build the tree through a single `write_attr()` helper that raises on any failed write.
 7. `modprobe dwc2` (a no-op if already loaded or built-in; which case applied is logged), wait for the UDC, then bind.
@@ -487,7 +487,7 @@ Replaces: wlanpi-usb-ethernet
 
 **Coexistence and migration handling, owned by this package**
 
-- The old package's conffiles survive `remove` (as opposed to `purge`), including `/etc/modprobe.d/wlanpi-usb-gadget.conf` (`blacklist dwc2`) and `usb0.network` / `usb1.network`. `selftest` detects them and prints the purge command. The new package never deletes another package's files.
+- The old package's conffiles survive `remove` (as opposed to `purge`), including `/etc/modprobe.d/wlanpi-usb-gadget.conf` (`blacklist dwc2`) and `usb0.network` / `usb1.network`. When `wlanpi-usb-ethernet` is in `rc` (`config-files`) or `not-installed` state, `postinst` removes those specific legacy conffiles directly with `rm -f` only if their contents match the exact unmodified legacy signature (leaving user-modified files untouched); `selftest` still flags any remaining legacy conffiles.
 - `apply` loads `dwc2` explicitly, so a leftover blacklist does not break the new package.
 - The bridge is named `usb0`, so a leftover `/etc/systemd/network/usb0.network` from the old package would match it. The generated files use a `50-` prefix and therefore take precedence; `selftest` still flags the leftover. A leftover `usb1.network` matches nothing.
 - `/etc/avahi/avahi-daemon.conf` is not touched on install, upgrade or removal.
@@ -496,6 +496,7 @@ Replaces: wlanpi-usb-ethernet
 **Maintainer scripts**
 
 - `dh_installsystemd --name=...` for each unit. The setup unit is installed with `--no-stop-on-upgrade --no-restart-after-upgrade`; the monitor restarts normally.
+- On live package upgrades (when `$2` is non-empty, `DPKG_ROOT` is unset, and `/run/systemd/system` exists), `postinst` touches `/run/wlanpi-usb-gadget/reapply-pending`. Because the setup unit is not restarted on upgrade, the restarted monitor consumes this flag on startup and runs `wlanpi-usb-gadget apply` to refresh bridge/networkd state.
 - `prerm remove`: stop the monitor, then the setup unit (which runs the ordered teardown), then disable. debhelper generates this; no hand-written `systemctl` calls.
 - `postrm purge`: remove `/var/lib/wlanpi-usb-gadget`.
 - **Gadget-mode enablement in `config.txt`: owned by this package on the Go, verify-and-warn elsewhere.** This reverses the earlier "never edited" position, which rested on E2. A full read of `/opt/wlanpi-common/wlanpi-config-at-startup.sh` (E10) shows it manages R4, M4, M4+ and Pro, and for the "Oscium Go" board only prints "Detected WLAN Pi Go". On the Go, nothing in wlanpi-common manages `config.txt`, `otg_mode` or the `dwc2` overlay.

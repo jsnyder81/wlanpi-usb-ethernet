@@ -44,5 +44,15 @@ jobs:
       - name: Build .deb package
         working-directory: wlanpi-usb-gadget
         run: dpkg-buildpackage -us -uc -b
+      - name: Check built maintainer scripts with sh -n
+        run: |
+          tmpdir=$(mktemp -d)
+          dpkg-deb -e wlanpi-usb-gadget_*.deb "$tmpdir"
+          for script in preinst postinst prerm postrm; do
+            if [ -f "$tmpdir/$script" ]; then
+              sh -n "$tmpdir/$script"
+            fi
+          done
+          rm -rf "$tmpdir"
       - name: Check .deb with lintian
         run: lintian ../wlanpi-usb-gadget_*.deb || true

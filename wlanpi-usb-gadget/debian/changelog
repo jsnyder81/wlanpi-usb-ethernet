@@ -1,3 +1,11 @@
+wlanpi-usb-gadget (0.5.6) trixie; urgency=medium
+
+  * Fix postinst syntax error caused by #DEBHELPER# token inside
+    schedule_upgrade_reapply() comment; add CI and bats sh -n checks for
+    built maintainer scripts; sync plan §3.1 and §7 docs.
+
+ -- WLAN Pi Team <maintainers@wlanpi.com>  Tue, 17 Nov 2026 18:24:30 +0000
+
 wlanpi-usb-gadget (0.5.5) trixie; urgency=medium
 
   * Fix member .network KeepMaster=yes (F1), postinst rc-state rm -f

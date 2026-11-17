@@ -68,7 +68,7 @@ schedule_upgrade_reapply() {
     systemd_run_dir="${WLANPI_SYSTEMD_RUN_DIR:-/run/systemd/system}"
     # Setup unit is Type=oneshot with RemainAfterExit=yes and --no-restart-after-upgrade,
     # so dh_installsystemd will not re-run it on upgrade. Flag the monitor (restarted by
-    # #DEBHELPER#) to perform a deferred apply once it starts.
+    # the debhelper-generated snippet below) to perform a deferred apply once it starts.
     if [ -n "$old_ver" ] && [ -z "${DPKG_ROOT:-}" ] && [ -d "$systemd_run_dir" ]; then
         mkdir -p "$(dirname "$reapply_flag")"
         touch "$reapply_flag"

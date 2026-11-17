@@ -214,3 +214,39 @@ EOF
 
   rm -rf "$tmp"
 }
+
+@test "debian maintainer scripts use #DEBHELPER# only as a standalone marker" {
+  local script count
+  for script in postinst prerm postrm; do
+    local path="${BATS_TEST_DIRNAME}/../../debian/${script}"
+    # Must never appear inside a comment/function or with extra text on the line
+    run grep -n '#DEBHELPER#' "$path"
+    [ "$status" -eq 0 ]
+    count=$(printf '%s\n' "$output" | wc -l)
+    [ "$count" -eq 1 ]
+    grep -qx '#DEBHELPER#' "$path"
+  done
+}
+
+@test "built deb maintainer scripts pass sh -n when deb is present" {
+  local pkg_dir ver deb tmp script
+  pkg_dir="${BATS_TEST_DIRNAME}/../.."
+  if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v dpkg-parsechangelog >/dev/null 2>&1; then
+    skip "dpkg-deb/dpkg-parsechangelog not available"
+  fi
+  ver="$(dpkg-parsechangelog -l "${pkg_dir}/debian/changelog" -S Version)"
+  deb="${pkg_dir}/../wlanpi-usb-gadget_${ver}_all.deb"
+  if [ ! -f "$deb" ]; then
+    skip "built deb ${deb} not present"
+  fi
+
+  tmp="$(mktemp -d)"
+  dpkg-deb -e "$deb" "$tmp"
+  for script in preinst postinst prerm postrm; do
+    if [ -f "${tmp}/${script}" ]; then
+      run sh -n "${tmp}/${script}"
+      [ "$status" -eq 0 ]
+    fi
+  done
+  rm -rf "$tmp"
+}
