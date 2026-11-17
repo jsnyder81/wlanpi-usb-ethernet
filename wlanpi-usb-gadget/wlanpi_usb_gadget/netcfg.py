@@ -94,8 +94,10 @@ def render_networkd_files(
     else:
         for c in profile.configs:
             for fn in c.functions:
-                if fn.ifname and fn.ifname != cfg.bridge_name and fn.ifname not in ifnames:
-                    ifnames.append(fn.ifname)
+                if fn.ifname:
+                    resolved = fn.ifname.replace("%d", "0")
+                    if resolved != cfg.bridge_name and resolved not in ifnames:
+                        ifnames.append(resolved)
 
     for ifname in ifnames:
         files[f"{FILE_PREFIX}-member-{ifname}.network"] = (
@@ -153,6 +155,38 @@ def remove_networkd_files(network_dir: Path = DEFAULT_NETWORK_DIR) -> int:
         existing.unlink()
         removed += 1
     return removed
+
+
+def ensure_bridge_exists(
+    bridge_name: str,
+    bridge_mac: str,
+    *,
+    sys_class_net: Path = Path("/sys/class/net"),
+) -> None:
+    """Create the bridge netdev before UDC bind so kernel-default usb%d starts at usb1+.
+
+    Setup runs Before=systemd-networkd.service, so without pre-creating the bridge,
+    a fallback to kernel-default usb%d would hand usb0 to the first gadget function
+    and block systemd-networkd from creating the usb0 bridge. If a non-bridge
+    interface already occupies `bridge_name`, rename it to `usbgadget0` first.
+    """
+    iface_dir = sys_class_net / bridge_name
+    if iface_dir.exists():
+        if (iface_dir / "bridge").exists():
+            return
+        # A non-bridge netdev occupies bridge_name (e.g. leftover usb0); move it aside.
+        subprocess.run(["ip", "link", "set", "dev", bridge_name, "down"], capture_output=True, check=False)
+        subprocess.run(
+            ["ip", "link", "set", "dev", bridge_name, "name", "usbgadget0"],
+            capture_output=True,
+            check=False,
+        )
+
+    subprocess.run(
+        ["ip", "link", "add", "name", bridge_name, "address", bridge_mac, "type", "bridge", "stp_state", "0"],
+        capture_output=True,
+        check=False,
+    )
 
 
 def reload_networkd() -> None:

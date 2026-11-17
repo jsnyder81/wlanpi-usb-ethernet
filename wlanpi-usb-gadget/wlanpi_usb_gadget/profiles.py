@@ -57,13 +57,13 @@ def get_profile(name: str, *, serial_console: bool = False) -> ProfileSpec:
             FunctionSpec(
                 kind="rndis",
                 instance="usb0",
-                ifname="usbrndis0",
+                ifname="usbrndis%d",
                 os_desc_compatible_id="RNDIS",
                 os_desc_sub_compatible_id="5162001",
             )
         ]
         c2_funcs: list[FunctionSpec] = [
-            FunctionSpec(kind="ecm", instance="usb0", ifname="usbecm0"),
+            FunctionSpec(kind="ecm", instance="usb0", ifname="usbecm%d"),
         ]
         if serial_console:
             c2_funcs.append(FunctionSpec(kind="acm", instance="gs0"))
@@ -96,7 +96,7 @@ def get_profile(name: str, *, serial_console: bool = False) -> ProfileSpec:
             FunctionSpec(
                 kind="ncm",
                 instance="usb0",
-                ifname="usbncm0",
+                ifname="usbncm%d",
                 os_desc_compatible_id="WINNCM",
             )
         ]
@@ -126,12 +126,12 @@ def get_profile(name: str, *, serial_console: bool = False) -> ProfileSpec:
             FunctionSpec(
                 kind="ncm",
                 instance="usb0",
-                ifname="usbncm0",
+                ifname="usbncm%d",
                 os_desc_compatible_id="WINNCM",
             )
         ]
         c2_funcs = [
-            FunctionSpec(kind="ecm", instance="usb0", ifname="usbecm0"),
+            FunctionSpec(kind="ecm", instance="usb0", ifname="usbecm%d"),
         ]
         if serial_console:
             c1_funcs.append(FunctionSpec(kind="acm", instance="gs0"))

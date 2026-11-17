@@ -18,7 +18,7 @@ from wlanpi_usb_gadget.configfs import (
     teardown_gadget,
 )
 from wlanpi_usb_gadget.mac import DerivedMacs
-from wlanpi_usb_gadget.netcfg import render_networkd_files
+from wlanpi_usb_gadget.netcfg import ensure_bridge_exists, render_networkd_files
 from wlanpi_usb_gadget.profiles import get_profile
 
 
@@ -36,7 +36,7 @@ class TestConfigfs(unittest.TestCase):
         p2 = plan_gadget_tree(get_profile("ncm", serial_console=True), self.macs, "10000000abcdef12")
         self.assertEqual(p1.tree_hash, p2.tree_hash)
         attr_dict = dict(p1.attrs)
-        self.assertEqual(attr_dict["functions/ncm.usb0/ifname"], "usbncm0")
+        self.assertEqual(attr_dict["functions/ncm.usb0/ifname"], "usbncm%d")
         self.assertEqual(attr_dict["functions/ncm.usb0/os_desc/interface.ncm/compatible_id"], "WINNCM")
 
     def test_legacy_matches_old_device_class_and_no_acm_by_default(self) -> None:
@@ -171,16 +171,65 @@ class TestConfigfs(unittest.TestCase):
                     first_bind_marker=Path(tmp) / "first_bind_done",
                 )
             self.assertEqual(res, "applied")
-            rec_ev.assert_any_call("ifname_unsupported", profile="legacy", detail="functions/rndis.usb0/ifname=usbrndis0")
+            rec_ev.assert_any_call("ifname_unsupported", profile="legacy", detail="functions/rndis.usb0/ifname=usbrndis%d")
 
             discovered = discover_member_ifnames(configfs_root=root, sys_class_net=sys_net, bridge_name="usb0")
-            self.assertIn("usbecm0", discovered)
+            self.assertIn("usbecm%d", discovered)
             self.assertIn("usb1", discovered)
             self.assertNotIn("usb0", discovered)
 
             files = render_networkd_files(validate_config({}), get_profile("legacy"), self.macs.bridge, member_ifnames=discovered)
             self.assertIn("50-wlanpi-usb-gadget-member-usb1.network", files)
             self.assertIn("Kind=!bridge", files["50-wlanpi-usb-gadget-member-usb1.network"])
+
+    def test_all_ifnames_honored_and_discovered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "usb_gadget"
+            root.mkdir()
+            sys_net = Path(tmp) / "sys_net"
+            sys_net.mkdir()
+            plan = plan_gadget_tree(get_profile("legacy"), self.macs, "10000000abcdef12")
+            orig_write = configfs.write_attr
+
+            # Simulate kernel expanding %d -> 0 on readback
+            def _kernel_expand(path: Path, value: str) -> None:
+                if path.name == "ifname" and "%d" in value:
+                    orig_write(path, value.replace("%d", "0"))
+                else:
+                    orig_write(path, value)
+
+            with (
+                mock.patch.object(configfs, "write_attr", side_effect=_kernel_expand),
+                mock.patch.object(configfs, "log_journal"),
+            ):
+                apply_gadget(
+                    plan,
+                    "fe980000.usb",
+                    configfs_root=root,
+                    hash_path=Path(tmp) / "gadget.hash",
+                    lock_path=Path(tmp) / "configfs.lock",
+                    first_bind_marker=Path(tmp) / "first_bind_done",
+                )
+
+            discovered = discover_member_ifnames(configfs_root=root, sys_class_net=sys_net, bridge_name="usb0")
+            self.assertEqual(sorted(discovered), ["usbecm0", "usbrndis0"])
+
+    def test_kernel_assigns_usb0_collision_resolved_by_ensure_bridge_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sys_net = Path(tmp) / "sys_net"
+            # Simulate a non-bridge function netdev holding usb0
+            (sys_net / "usb0").mkdir(parents=True)
+            calls: list[list[str]] = []
+
+            with mock.patch("wlanpi_usb_gadget.netcfg.subprocess.run", side_effect=lambda cmd, **_kw: calls.append(cmd)):
+                ensure_bridge_exists("usb0", self.macs.bridge, sys_class_net=sys_net)
+
+            self.assertIn(["ip", "link", "set", "dev", "usb0", "down"], calls)
+            self.assertIn(["ip", "link", "set", "dev", "usb0", "name", "usbgadget0"], calls)
+            self.assertIn(
+                ["ip", "link", "add", "name", "usb0", "address", self.macs.bridge, "type", "bridge", "stp_state", "0"],
+                calls,
+            )
 
     def test_teardown_partial_tree(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

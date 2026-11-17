@@ -25,7 +25,12 @@ from wlanpi_usb_gadget.httpd import serve_status_http
 from wlanpi_usb_gadget.journal import PRIORITY_ERR, PRIORITY_INFO, log_journal
 from wlanpi_usb_gadget.mac import derive_all_macs, read_board_serial
 from wlanpi_usb_gadget.monitor import run_monitor
-from wlanpi_usb_gadget.netcfg import reload_networkd, remove_networkd_files, write_networkd_files
+from wlanpi_usb_gadget.netcfg import (
+    ensure_bridge_exists,
+    reload_networkd,
+    remove_networkd_files,
+    write_networkd_files,
+)
 from wlanpi_usb_gadget.profiles import get_profile, list_profiles
 from wlanpi_usb_gadget.report import write_report_tgz
 from wlanpi_usb_gadget.status import (
@@ -54,6 +59,7 @@ def _cmd_apply(force: bool) -> int:
         macs = derive_all_macs()
         serial, _ = read_board_serial()
         write_networkd_files(cfg, prof, macs.bridge)
+        ensure_bridge_exists(cfg.bridge_name, macs.bridge)
         reload_networkd()
 
         ensure_kernel_module("libcomposite")

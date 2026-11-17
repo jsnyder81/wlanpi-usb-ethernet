@@ -34,7 +34,7 @@ from wlanpi_usb_gadget.journal import (
     log_journal,
 )
 from wlanpi_usb_gadget.mac import derive_all_macs, read_board_serial
-from wlanpi_usb_gadget.netcfg import reload_networkd, write_networkd_files
+from wlanpi_usb_gadget.netcfg import ensure_bridge_exists, reload_networkd, write_networkd_files
 from wlanpi_usb_gadget.netlink import LinkEvent, NeighEvent, NetlinkListener
 from wlanpi_usb_gadget.profiles import get_profile
 from wlanpi_usb_gadget.recovery import (
@@ -125,6 +125,7 @@ def _execute_recovery_action(
         prof = get_profile(profile_name, serial_console=cfg.serial_console)
         plan = plan_gadget_tree(prof, macs, serial)
         write_networkd_files(cfg, prof, macs.bridge)
+        ensure_bridge_exists(cfg.bridge_name, macs.bridge)
         reload_networkd()
         try:
             apply_gadget(plan, udc_name, force=True)
