@@ -150,6 +150,89 @@ class TestMonitorLoop(unittest.TestCase):
                 mock_run.assert_called_once()
                 self.assertEqual(mock_run.call_args[0][0], ["/usr/bin/wlanpi-usb-gadget", "apply"])
 
+    def test_rebind_while_carrier_stable_and_edge_logging(self) -> None:
+        from wlanpi_usb_gadget.netlink import LinkEvent
+
+        with tempfile.TemporaryDirectory() as tmp:
+            t = Path(tmp)
+            profile_path = t / "profile.json"
+            cfg = GadgetConfig(profile="legacy", safe_profile="legacy")
+
+            # Simulate UDC configured -> not attached -> configured while member carrier stays '1',
+            # plus a bridge carrier 1 -> 0 -> 1 edge and a netlink LinkEvent bounce while UDC stays configured.
+            udc_states = iter(["configured", "not attached", "configured", "configured"])
+            bridge_carriers = iter([True, True, False, True])
+            has_neigh_seq = iter([True, True, False, True])
+
+            class _FakeNetlink:
+                def __init__(self) -> None:
+                    self.calls = 0
+
+                def fileno(self) -> int:
+                    return 99
+
+                def read_events(self) -> list[LinkEvent]:
+                    self.calls += 1
+                    if self.calls == 1:
+                        return [
+                            LinkEvent(kind="new", ifindex=5, ifname="usb0", flags=1, carrier=False),
+                            LinkEvent(kind="new", ifindex=5, ifname="usb0", flags=0x10001, carrier=True),
+                        ]
+                    return []
+
+                def close(self) -> None:
+                    return None
+
+            fake_nl = _FakeNetlink()
+            poll_calls = 0
+
+            def _fake_poll() -> list[tuple[int, int]]:
+                nonlocal poll_calls
+                poll_calls += 1
+                if poll_calls == 4:
+                    import os
+                    import signal
+
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    return [(99, 1)]
+                return []
+
+            recorded: list[tuple[str, dict[str, object]]] = []
+
+            with (
+                mock.patch.object(monitor, "load_config", return_value=cfg),
+                mock.patch.object(monitor, "NetlinkListener", return_value=fake_nl),
+                mock.patch.object(monitor, "detect_controller", return_value=ControllerInfo("fe980000.usb", "peripheral", "module")),
+                mock.patch.object(monitor, "list_udcs", return_value=["fe980000.usb"]),
+                mock.patch.object(monitor, "read_udc_attr", side_effect=lambda _u, _a: next(udc_states, "configured")),
+                mock.patch.object(monitor, "read_bound_udc", return_value="fe980000.usb"),
+                mock.patch.object(monitor, "_read_carrier_ifaces", return_value=("usbrndis0",)),
+                mock.patch.object(monitor, "_read_bridge_carrier", side_effect=lambda _b: next(bridge_carriers, True)),
+                mock.patch.object(monitor, "_has_bridge_neighbour", side_effect=lambda _b: next(has_neigh_seq, True)),
+                mock.patch.object(monitor, "DEFAULT_PROFILE_STATE_PATH", profile_path),
+                mock.patch.object(monitor, "load_profile_state", side_effect=lambda default_profile="legacy": load_profile_state(default_profile=default_profile, path=profile_path)),
+                mock.patch.object(monitor, "write_runtime_state"),
+                mock.patch.object(monitor, "record_event", side_effect=lambda ev, **kw: recorded.append((ev, kw))),
+                mock.patch.object(monitor, "log_journal"),
+                mock.patch.object(monitor, "sd_notify"),
+                mock.patch("select.poll", return_value=_FakePoller(_fake_poll)),
+            ):
+                rc = monitor.run_monitor()
+
+            self.assertEqual(rc, 0)
+            udc_edges = [kw["detail"] for ev, kw in recorded if ev == "udc_edge"]
+            self.assertEqual(udc_edges, ["configured->not attached", "not attached->configured"])
+
+            transitions = [(kw["prev_state"], kw["state"]) for ev, kw in recorded if ev == "transition"]
+            self.assertIn(("ONLINE", "DETACHED"), transitions)
+            self.assertIn(("DETACHED", "LINK_UP"), transitions)
+            self.assertIn(("LINK_UP", "CONFIGURED_NO_LINK"), transitions)
+            self.assertIn(("CONFIGURED_NO_LINK", "ONLINE"), transitions)
+
+            bridge_edges = [kw["detail"] for ev, kw in recorded if ev == "bridge_carrier"]
+            self.assertIn("carrier=1", bridge_edges)
+            self.assertIn("carrier=0", bridge_edges)
+
 
 if __name__ == "__main__":
     unittest.main()

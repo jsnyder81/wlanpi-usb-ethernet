@@ -46,6 +46,38 @@ class TestConfigfs(unittest.TestCase):
         self.assertNotIn("bDeviceClass", attr_dict)
         self.assertNotIn("functions/acm.gs0", plan.dirs)
 
+    def test_bcd_usb_0201_written_before_os_desc_and_udc_bind(self) -> None:
+        plan = plan_gadget_tree(get_profile("legacy"), self.macs, "10000000abcdef12")
+        attr_keys = [k for k, _v in plan.attrs]
+        self.assertEqual(dict(plan.attrs)["bcdUSB"], "0x0201")
+        self.assertLess(attr_keys.index("bcdUSB"), attr_keys.index("os_desc/use"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "usb_gadget"
+            root.mkdir()
+            writes: list[tuple[str, str]] = []
+            orig_write = configfs.write_attr
+
+            def _spy_write(path: Path, value: str) -> None:
+                rel = str(path.relative_to(root / "wlanpi-usb-gadget"))
+                writes.append((rel, value))
+                orig_write(path, value)
+
+            with mock.patch.object(configfs, "write_attr", side_effect=_spy_write):
+                apply_gadget(
+                    plan,
+                    "fe980000.usb",
+                    configfs_root=root,
+                    hash_path=Path(tmp) / "gadget.hash",
+                    lock_path=Path(tmp) / "configfs.lock",
+                    first_bind_marker=Path(tmp) / "first_bind_done",
+                )
+
+            written_keys = [k for k, _v in writes]
+            self.assertIn(("bcdUSB", "0x0201"), writes)
+            self.assertLess(written_keys.index("bcdUSB"), written_keys.index("os_desc/use"))
+            self.assertLess(written_keys.index("bcdUSB"), written_keys.index("UDC"))
+
     def test_apply_idempotent_and_ordered_teardown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "usb_gadget"
@@ -65,13 +97,14 @@ class TestConfigfs(unittest.TestCase):
             self.assertEqual(res1, "applied")
             self.assertTrue((root / "wlanpi-usb-gadget" / "UDC").exists())
             self.assertEqual((root / "wlanpi-usb-gadget" / "UDC").read_text().strip(), "fe980000.usb")
-            # Legacy config numbering must match wlanpi-usb-ethernet: c.1=ECM, c.2=RNDIS+os_desc
-            self.assertTrue((root / "wlanpi-usb-gadget" / "configs" / "c.1" / "ecm.usb0").is_symlink())
-            self.assertFalse((root / "wlanpi-usb-gadget" / "configs" / "c.1" / "rndis.usb0").exists())
-            self.assertTrue((root / "wlanpi-usb-gadget" / "configs" / "c.2" / "rndis.usb0").is_symlink())
-            self.assertFalse((root / "wlanpi-usb-gadget" / "configs" / "c.2" / "ecm.usb0").exists())
-            self.assertTrue((root / "wlanpi-usb-gadget" / "os_desc" / "c.2").is_symlink())
-            self.assertFalse((root / "wlanpi-usb-gadget" / "os_desc" / "c.1").exists())
+            # Legacy config numbering: c.1=RNDIS+os_desc, c.2=ECM (Android host support, E18)
+            self.assertTrue((root / "wlanpi-usb-gadget" / "configs" / "c.1" / "rndis.usb0").is_symlink())
+            self.assertFalse((root / "wlanpi-usb-gadget" / "configs" / "c.1" / "ecm.usb0").exists())
+            self.assertTrue((root / "wlanpi-usb-gadget" / "configs" / "c.2" / "ecm.usb0").is_symlink())
+            self.assertFalse((root / "wlanpi-usb-gadget" / "configs" / "c.2" / "rndis.usb0").exists())
+            self.assertTrue((root / "wlanpi-usb-gadget" / "os_desc" / "c.1").is_symlink())
+            self.assertFalse((root / "wlanpi-usb-gadget" / "os_desc" / "c.2").exists())
+            self.assertEqual((root / "wlanpi-usb-gadget" / "bcdUSB").read_text().strip(), "0x0201")
 
             res2 = apply_gadget(
                 plan,

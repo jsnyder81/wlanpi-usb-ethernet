@@ -58,7 +58,7 @@ from wlanpi_usb_gadget.udc import (
     soft_reconnect,
 )
 
-SAFETY_POLL_MS = 10000
+SAFETY_POLL_MS = 1000
 DEFAULT_REAPPLY_FLAG_PATH = Path("/run/wlanpi-usb-gadget/reapply-pending")
 
 
@@ -122,6 +122,22 @@ def _read_carrier_ifaces(
             except OSError:
                 pass
     return tuple(up)
+
+
+def _read_bridge_carrier(bridge_name: str = "usb0") -> bool | None:
+    """Read current carrier (0/1) of the bridge interface, or None if absent."""
+    p = Path("/sys/class/net") / bridge_name / "carrier"
+    if not p.exists():
+        return None
+    try:
+        val = p.read_text(encoding="utf-8", errors="ignore").strip()
+    except OSError:
+        return None
+    if val == "1":
+        return True
+    if val == "0":
+        return False
+    return None
 
 
 def _has_bridge_neighbour(bridge_name: str) -> bool:
@@ -230,6 +246,11 @@ def run_monitor() -> int:
             if state_path.exists():
                 try:
                     udc_fd = os.open(state_path, os.O_RDONLY)
+                    # Arm sysfs POLLPRI/POLLERR by performing an initial read.
+                    try:
+                        os.read(udc_fd, 64)
+                    except OSError:
+                        pass
                 except OSError:
                     udc_fd = None
 
@@ -239,7 +260,53 @@ def run_monitor() -> int:
         _open_udc_fd()
     last_tick = time.monotonic()
     last_udc_state = ""
+    last_bridge_carrier: bool | None = None
     suppress_attach_until = 0.0
+
+    def _emit_transition(tr_obj: object) -> None:
+        from wlanpi_usb_gadget.statemachine import Transition
+
+        assert isinstance(tr_obj, Transition)
+        log_journal(
+            f"State {tr_obj.prev_state} -> {tr_obj.new_state}",
+            priority=PRIORITY_INFO,
+            GADGET_EVENT="transition",
+            GADGET_STATE=tr_obj.new_state,
+            GADGET_PREV_STATE=tr_obj.prev_state,
+            GADGET_PROFILE=active_profile,
+            GADGET_UDC_STATE=tr_obj.udc_state,
+            GADGET_IFACE=tr_obj.active_iface,
+        )
+        record_event(
+            "transition",
+            state=tr_obj.new_state,
+            prev_state=tr_obj.prev_state,
+            profile=active_profile,
+            udc_state=tr_obj.udc_state,
+            iface=tr_obj.active_iface,
+        )
+        if tr_obj.new_state in ("LINK_UP", "ONLINE"):
+            recovery.on_healthy()
+
+    def _emit_bridge_carrier(carrier: bool, udc_state_val: str) -> None:
+        val = 1 if carrier else 0
+        log_journal(
+            f"Bridge {cfg.bridge_name} carrier={val}",
+            priority=PRIORITY_INFO,
+            GADGET_EVENT="bridge_carrier",
+            GADGET_STATE=sm.state,
+            GADGET_PROFILE=active_profile,
+            GADGET_UDC_STATE=udc_state_val,
+            GADGET_IFACE=cfg.bridge_name,
+        )
+        record_event(
+            "bridge_carrier",
+            state=sm.state,
+            profile=active_profile,
+            udc_state=udc_state_val,
+            iface=cfg.bridge_name,
+            detail=f"carrier={val}",
+        )
 
     try:
         while running:
@@ -261,10 +328,30 @@ def run_monitor() -> int:
             events = poller.poll(SAFETY_POLL_MS)
             sd_notify("WATCHDOG=1")
 
+            link_drop_seen = False
             for fd, _mask in events:
                 if netlink is not None and fd == netlink.fileno():
-                    for ev in netlink.read_events():
-                        if isinstance(ev, (LinkEvent, NeighEvent)):
+                    try:
+                        nl_events = netlink.read_events()
+                    except OSError:
+                        netlink.close()
+                        try:
+                            netlink = NetlinkListener()
+                        except OSError:
+                            netlink = None
+                        nl_events = []
+                    for ev in nl_events:
+                        if isinstance(ev, LinkEvent):
+                            if ev.ifname == cfg.bridge_name:
+                                if last_bridge_carrier is None or ev.carrier != last_bridge_carrier:
+                                    _emit_bridge_carrier(ev.carrier, last_udc_state)
+                                    last_bridge_carrier = ev.carrier
+                                if ev.kind == "del" or not ev.carrier:
+                                    link_drop_seen = True
+                            elif ev.ifname == sm.active_iface or ev.ifname.startswith(("usbecm", "usbrndis", "usbncm")):
+                                if ev.kind == "del" or not ev.carrier:
+                                    link_drop_seen = True
+                        elif isinstance(ev, NeighEvent):
                             pass
                 elif udc_fd is not None and fd == udc_fd:
                     try:
@@ -288,6 +375,30 @@ def run_monitor() -> int:
                 _open_udc_fd()
             udc_state = (read_udc_attr(udc_name, "state") if udc_name else None) or ""
             bound = bool(read_bound_udc(DEFAULT_CONFIGFS_ROOT / GADGET_NAME))
+
+            prev_udc_norm = last_udc_state.strip().lower()
+            curr_udc_norm = udc_state.strip().lower()
+            if (prev_udc_norm == "configured" and curr_udc_norm == "not attached") or (
+                prev_udc_norm == "not attached" and curr_udc_norm == "configured"
+            ):
+                log_journal(
+                    f"UDC edge {prev_udc_norm} -> {curr_udc_norm}",
+                    priority=PRIORITY_INFO,
+                    GADGET_EVENT="udc_edge",
+                    GADGET_STATE=sm.state,
+                    GADGET_PROFILE=active_profile,
+                    GADGET_UDC_STATE=udc_state,
+                    GADGET_IFACE=sm.active_iface,
+                )
+                record_event(
+                    "udc_edge",
+                    state=sm.state,
+                    prev_state=sm.prev_state,
+                    profile=active_profile,
+                    udc_state=udc_state,
+                    iface=sm.active_iface,
+                    detail=f"{prev_udc_norm}->{curr_udc_norm}",
+                )
 
             # Detect physical detach -> attach for replug knock & HOLD exit (ignore self-induced re-enum)
             if (
@@ -323,6 +434,11 @@ def run_monitor() -> int:
                             log_journal(f"Replug knock apply failed: {exc}", priority=PRIORITY_ERR)
             last_udc_state = udc_state
 
+            bridge_carrier = _read_bridge_carrier(cfg.bridge_name)
+            if bridge_carrier is not None and (last_bridge_carrier is None or bridge_carrier != last_bridge_carrier):
+                _emit_bridge_carrier(bridge_carrier, udc_state)
+                last_bridge_carrier = bridge_carrier
+
             carriers = _read_carrier_ifaces()
             has_neigh = _has_bridge_neighbour(cfg.bridge_name) if carriers else False
 
@@ -335,28 +451,29 @@ def run_monitor() -> int:
                 has_neighbour=has_neigh,
                 hold=recovery.hold,
             )
+            if (
+                link_drop_seen
+                and sm.state in ("LINK_UP", "ONLINE")
+                and curr_udc_norm == "configured"
+                and sig.carrier_ifaces
+            ):
+                drop_tr = sm.update(
+                    Signals(
+                        dr_mode=sig.dr_mode,
+                        udc_present=sig.udc_present,
+                        gadget_bound=sig.gadget_bound,
+                        udc_state=sig.udc_state,
+                        carrier_ifaces=(),
+                        has_neighbour=False,
+                        hold=sig.hold,
+                    ),
+                    now,
+                )
+                if drop_tr is not None:
+                    _emit_transition(drop_tr)
             tr = sm.update(sig, now)
             if tr is not None:
-                log_journal(
-                    f"State {tr.prev_state} -> {tr.new_state}",
-                    priority=PRIORITY_INFO,
-                    GADGET_EVENT="transition",
-                    GADGET_STATE=tr.new_state,
-                    GADGET_PREV_STATE=tr.prev_state,
-                    GADGET_PROFILE=active_profile,
-                    GADGET_UDC_STATE=tr.udc_state,
-                    GADGET_IFACE=tr.active_iface,
-                )
-                record_event(
-                    "transition",
-                    state=tr.new_state,
-                    prev_state=tr.prev_state,
-                    profile=active_profile,
-                    udc_state=tr.udc_state,
-                    iface=tr.active_iface,
-                )
-                if tr.new_state in ("LINK_UP", "ONLINE"):
-                    recovery.on_healthy()
+                _emit_transition(tr)
 
             # Dead-man profile trial tick
             online_dur = (now - sm.online_since_mono) if sm.online_since_mono is not None else None

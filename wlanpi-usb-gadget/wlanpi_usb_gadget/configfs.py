@@ -88,7 +88,7 @@ def plan_gadget_tree(
         ("idVendor", VENDOR_ID),
         ("idProduct", PRODUCT_ID),
         ("bcdDevice", profile.bcd_device),
-        ("bcdUSB", "0x0200"),
+        ("bcdUSB", "0x0201"),
         ("strings/0x409/serialnumber", serial_number),
         ("strings/0x409/manufacturer", MANUFACTURER),
         ("strings/0x409/product", PRODUCT),

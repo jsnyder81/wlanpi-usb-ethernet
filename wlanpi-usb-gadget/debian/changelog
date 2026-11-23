@@ -1,3 +1,11 @@
+wlanpi-usb-gadget (0.5.8) trixie; urgency=medium
+
+  * Set bcdUSB=0x0201 for BOS/OS-descriptor discovery, swap legacy
+    profile to c.1=RNDIS+os_desc c.2=ECM for Android host support, and
+    fix monitor UDC/bridge-carrier edge logging across host swaps.
+
+ -- WLAN Pi Team <maintainers@wlanpi.com>  Mon, 23 Nov 2026 23:39:42 +0000
+
 wlanpi-usb-gadget (0.5.7) trixie; urgency=medium
 
   * Fix non-root CLI crash when /var/lib/wlanpi-usb-gadget/events.jsonl
