@@ -38,6 +38,8 @@ from wlanpi_usb_gadget.mac import derive_all_macs, read_board_serial
 from wlanpi_usb_gadget.netcfg import (
     enslave_and_up_bridge,
     ensure_bridge_exists,
+    maybe_restart_avahi_on_ifindex_change,
+    read_iface_ifindex,
     reload_networkd,
     write_networkd_files,
 )
@@ -171,6 +173,7 @@ def _execute_recovery_action(
             recovery.last_bind_succeeded = False
             raise
     elif action == "teardown_apply" and udc_name:
+        bridge_ifindex_before = read_iface_ifindex(cfg.bridge_name)
         teardown_gadget()
         macs = derive_all_macs()
         serial, _ = read_board_serial()
@@ -189,6 +192,7 @@ def _execute_recovery_action(
             if actual:
                 write_networkd_files(cfg, prof, macs.bridge, member_ifnames=actual)
             reload_networkd()
+            maybe_restart_avahi_on_ifindex_change(cfg.bridge_name, bridge_ifindex_before, profile=profile_name)
             recovery.last_bind_succeeded = True
         except Exception:
             recovery.last_bind_succeeded = False
@@ -260,6 +264,7 @@ def run_monitor() -> int:
         _open_udc_fd()
     last_tick = time.monotonic()
     last_udc_state = ""
+    last_terminal_udc_state = ""
     last_bridge_carrier: bool | None = None
     suppress_attach_until = 0.0
 
@@ -376,29 +381,30 @@ def run_monitor() -> int:
             udc_state = (read_udc_attr(udc_name, "state") if udc_name else None) or ""
             bound = bool(read_bound_udc(DEFAULT_CONFIGFS_ROOT / GADGET_NAME))
 
-            prev_udc_norm = last_udc_state.strip().lower()
             curr_udc_norm = udc_state.strip().lower()
-            if (prev_udc_norm == "configured" and curr_udc_norm == "not attached") or (
-                prev_udc_norm == "not attached" and curr_udc_norm == "configured"
-            ):
-                log_journal(
-                    f"UDC edge {prev_udc_norm} -> {curr_udc_norm}",
-                    priority=PRIORITY_INFO,
-                    GADGET_EVENT="udc_edge",
-                    GADGET_STATE=sm.state,
-                    GADGET_PROFILE=active_profile,
-                    GADGET_UDC_STATE=udc_state,
-                    GADGET_IFACE=sm.active_iface,
-                )
-                record_event(
-                    "udc_edge",
-                    state=sm.state,
-                    prev_state=sm.prev_state,
-                    profile=active_profile,
-                    udc_state=udc_state,
-                    iface=sm.active_iface,
-                    detail=f"{prev_udc_norm}->{curr_udc_norm}",
-                )
+            if curr_udc_norm in ("configured", "not attached"):
+                if (last_terminal_udc_state == "configured" and curr_udc_norm == "not attached") or (
+                    last_terminal_udc_state == "not attached" and curr_udc_norm == "configured"
+                ):
+                    log_journal(
+                        f"UDC edge {last_terminal_udc_state} -> {curr_udc_norm}",
+                        priority=PRIORITY_INFO,
+                        GADGET_EVENT="udc_edge",
+                        GADGET_STATE=sm.state,
+                        GADGET_PROFILE=active_profile,
+                        GADGET_UDC_STATE=udc_state,
+                        GADGET_IFACE=sm.active_iface,
+                    )
+                    record_event(
+                        "udc_edge",
+                        state=sm.state,
+                        prev_state=sm.prev_state,
+                        profile=active_profile,
+                        udc_state=udc_state,
+                        iface=sm.active_iface,
+                        detail=f"{last_terminal_udc_state}->{curr_udc_norm}",
+                    )
+                last_terminal_udc_state = curr_udc_norm
 
             # Detect physical detach -> attach for replug knock & HOLD exit (ignore self-induced re-enum)
             if (

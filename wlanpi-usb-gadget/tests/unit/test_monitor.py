@@ -233,6 +233,76 @@ class TestMonitorLoop(unittest.TestCase):
             self.assertIn("carrier=1", bridge_edges)
             self.assertIn("carrier=0", bridge_edges)
 
+    def test_udc_edge_ignores_intermediate_states(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_path = Path(tmp) / "profile-state.json"
+            profile_path.write_text(json.dumps({"active": "legacy", "committed": "legacy"}), encoding="utf-8")
+            cfg = GadgetConfig(monitor_recovery="off")
+
+            # Intermediate states (powered/default/addressed/suspended) must not swallow
+            # the not attached -> configured or configured -> not attached edge.
+            udc_states = iter(["not attached", "powered", "default", "addressed", "configured", "suspended", "not attached"])
+
+            class _FakePoller:
+                def __init__(self, cb: object) -> None:
+                    self._cb = cb
+
+                def register(self, _fd: int, _mask: int) -> None:
+                    return None
+
+                def poll(self, _timeout_ms: int) -> list[tuple[int, int]]:
+                    return self._cb()  # type: ignore[operator]
+
+            class _FakeNetlink:
+                def fileno(self) -> int:
+                    return 99
+
+                def read_events(self) -> list[object]:
+                    return []
+
+                def close(self) -> None:
+                    return None
+
+            poll_calls = 0
+
+            def _fake_poll() -> list[tuple[int, int]]:
+                nonlocal poll_calls
+                poll_calls += 1
+                if poll_calls == 7:
+                    import os
+                    import signal
+
+                    os.kill(os.getpid(), signal.SIGTERM)
+                return []
+
+            recorded: list[tuple[str, dict[str, object]]] = []
+
+            with (
+                mock.patch.object(monitor, "load_config", return_value=cfg),
+                mock.patch.object(monitor, "NetlinkListener", return_value=_FakeNetlink()),
+                mock.patch.object(monitor, "detect_controller", return_value=ControllerInfo("fe980000.usb", "peripheral", "module")),
+                mock.patch.object(monitor, "list_udcs", return_value=["fe980000.usb"]),
+                mock.patch.object(monitor, "read_udc_attr", side_effect=lambda _u, _a: next(udc_states, "not attached")),
+                mock.patch.object(monitor, "read_bound_udc", return_value="fe980000.usb"),
+                mock.patch.object(monitor, "_read_carrier_ifaces", return_value=()),
+                mock.patch.object(monitor, "_read_bridge_carrier", return_value=False),
+                mock.patch.object(monitor, "_has_bridge_neighbour", return_value=False),
+                mock.patch.object(monitor, "DEFAULT_PROFILE_STATE_PATH", profile_path),
+                mock.patch.object(monitor, "load_profile_state", side_effect=lambda default_profile="legacy": load_profile_state(default_profile=default_profile, path=profile_path)),
+                mock.patch.object(monitor, "write_runtime_state"),
+                mock.patch.object(monitor, "record_event", side_effect=lambda ev, **kw: recorded.append((ev, kw))),
+                mock.patch.object(monitor, "log_journal"),
+                mock.patch.object(monitor, "sd_notify"),
+                mock.patch("select.poll", return_value=_FakePoller(_fake_poll)),
+            ):
+                rc = monitor.run_monitor()
+
+            self.assertEqual(rc, 0)
+            udc_edges = [kw["detail"] for ev, kw in recorded if ev == "udc_edge"]
+            self.assertEqual(udc_edges, ["not attached->configured", "configured->not attached"])
+
 
 if __name__ == "__main__":
     unittest.main()

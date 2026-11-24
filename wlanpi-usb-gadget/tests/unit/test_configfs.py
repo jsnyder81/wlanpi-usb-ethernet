@@ -78,6 +78,30 @@ class TestConfigfs(unittest.TestCase):
             self.assertLess(written_keys.index("bcdUSB"), written_keys.index("os_desc/use"))
             self.assertLess(written_keys.index("bcdUSB"), written_keys.index("UDC"))
 
+    def test_ncm_profile_bcd_usb_and_config_tree(self) -> None:
+        plan = plan_gadget_tree(get_profile("ncm"), self.macs, "10000000abcdef12")
+        attr_dict = dict(plan.attrs)
+        self.assertEqual(attr_dict["bcdUSB"], "0x0201")
+        self.assertEqual(attr_dict["bcdDevice"], "0x0200")
+        self.assertEqual(attr_dict["functions/ncm.usb0/ifname"], "usbncm%d")
+        self.assertEqual(attr_dict["functions/ncm.usb0/os_desc/interface.ncm/compatible_id"], "WINNCM")
+        self.assertEqual(set(plan.symlinks), {("configs/c.1/ncm.usb0", "functions/ncm.usb0"), ("os_desc/c.1", "configs/c.1")})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "usb_gadget"
+            root.mkdir()
+            apply_gadget(
+                plan,
+                "fe980000.usb",
+                configfs_root=root,
+                hash_path=Path(tmp) / "gadget.hash",
+                lock_path=Path(tmp) / "configfs.lock",
+                first_bind_marker=Path(tmp) / "first_bind_done",
+            )
+            self.assertEqual((root / "wlanpi-usb-gadget" / "bcdUSB").read_text().strip(), "0x0201")
+            self.assertTrue((root / "wlanpi-usb-gadget" / "configs" / "c.1" / "ncm.usb0").is_symlink())
+            self.assertTrue((root / "wlanpi-usb-gadget" / "os_desc" / "c.1").is_symlink())
+
     def test_apply_idempotent_and_ordered_teardown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "usb_gadget"

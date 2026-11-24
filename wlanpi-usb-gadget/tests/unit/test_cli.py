@@ -94,6 +94,55 @@ class TestCli(unittest.TestCase):
             self.assertIn("usb0 missing", checks["avahi_allow_interfaces"].detail)
             self.assertIn("Add usb0 to allow-interfaces", checks["avahi_allow_interfaces"].hint)
 
+    def test_apply_restarts_avahi_when_bridge_ifindex_changes(self) -> None:
+        import subprocess
+        from types import SimpleNamespace
+        from wlanpi_usb_gadget import netcfg
+
+        cfg = GadgetConfig()
+        macs = DerivedMacs("02:11:22:33:44:55", "02:aa:bb:cc:dd:ee", "02:de:ad:be:ef:01", "test")
+        ifindex_seq = iter([4, 9])
+        systemctl_calls: list[list[str]] = []
+
+        def _fake_systemctl(cmd: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
+            systemctl_calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with (
+            mock.patch.object(cli, "load_config", return_value=cfg),
+            mock.patch.object(cli, "load_profile_state", return_value=SimpleNamespace(active="ncm")),
+            mock.patch.object(cli, "detect_controller", return_value=ControllerInfo("fe980000.usb", "peripheral", "module")),
+            mock.patch.object(cli, "derive_all_macs", return_value=macs),
+            mock.patch.object(cli, "read_board_serial", return_value=("10000000abcdef12", "serial")),
+            mock.patch.object(cli, "ensure_kernel_module"),
+            mock.patch.object(cli, "build_gadget_tree", return_value="applied"),
+            mock.patch.object(cli, "wait_for_udc", return_value="fe980000.usb"),
+            mock.patch.object(cli, "write_networkd_files"),
+            mock.patch.object(cli, "bind_gadget_udc", return_value="applied"),
+            mock.patch.object(cli, "ensure_bridge_exists"),
+            mock.patch.object(cli, "discover_member_ifnames", return_value=["usbncm0"]),
+            mock.patch.object(cli, "enslave_and_up_bridge"),
+            mock.patch.object(cli, "reload_networkd"),
+            mock.patch.object(cli, "log_journal"),
+            mock.patch.object(cli, "record_event"),
+            mock.patch.object(cli, "read_iface_ifindex", side_effect=lambda _b: next(ifindex_seq)),
+            mock.patch.object(netcfg, "read_iface_ifindex", side_effect=lambda _b, **_kw: next(ifindex_seq)),
+            mock.patch("wlanpi_usb_gadget.netcfg.subprocess.run", side_effect=_fake_systemctl),
+            mock.patch.object(netcfg, "record_event") as net_rec,
+            mock.patch.object(netcfg, "log_journal"),
+        ):
+            rc = cli._cmd_apply(force=True)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            systemctl_calls,
+            [
+                ["systemctl", "is-enabled", "--quiet", "avahi-daemon"],
+                ["systemctl", "try-restart", "avahi-daemon"],
+            ],
+        )
+        net_rec.assert_called_once_with("avahi_restart", profile="ncm", detail="bridge=usb0 ifindex 4->9 rc=0")
+
 
 if __name__ == "__main__":
     unittest.main()

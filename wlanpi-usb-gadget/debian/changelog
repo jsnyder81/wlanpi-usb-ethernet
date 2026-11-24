@@ -1,8 +1,18 @@
+wlanpi-usb-gadget (0.5.9) trixie; urgency=medium
+
+  * Restart avahi-daemon (best-effort try-restart) when apply/recovery
+    recreates usb0 with a new ifindex; track terminal UDC state for
+    udc_edge; add ncm profile bcdUSB/config test and E19/E20 field
+    evidence.
+
+ -- WLAN Pi Team <maintainers@wlanpi.com>  Tue, 24 Nov 2026 00:24:38 +0000
+
 wlanpi-usb-gadget (0.5.8) trixie; urgency=medium
 
-  * Set bcdUSB=0x0201 for BOS/OS-descriptor discovery, swap legacy
-    profile to c.1=RNDIS+os_desc c.2=ECM for Android host support, and
-    fix monitor UDC/bridge-carrier edge logging across host swaps.
+  * Swap legacy profile to c.1=RNDIS+os_desc c.2=ECM (note: bcdUSB=0x0201
+    write is a no-op on this kernel as composite.c overwrites it; the
+    config-order swap is what fixed Android), and fix monitor
+    UDC/bridge-carrier edge logging across host swaps.
 
  -- WLAN Pi Team <maintainers@wlanpi.com>  Mon, 23 Nov 2026 23:39:42 +0000
 

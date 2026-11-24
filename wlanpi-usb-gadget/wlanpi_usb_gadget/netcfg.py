@@ -7,7 +7,8 @@ import subprocess
 from pathlib import Path
 
 from wlanpi_usb_gadget.config import GadgetConfig
-from wlanpi_usb_gadget.journal import PRIORITY_WARNING, log_journal
+from wlanpi_usb_gadget.events import record_event
+from wlanpi_usb_gadget.journal import PRIORITY_INFO, PRIORITY_WARNING, log_journal
 from wlanpi_usb_gadget.profiles import ProfileSpec
 
 DEFAULT_NETWORK_DIR = Path("/run/systemd/network")
@@ -285,3 +286,74 @@ def enslave_and_up_bridge(bridge_name: str, member_ifnames: list[str] | tuple[st
 def reload_networkd() -> None:
     """Reload systemd-networkd configuration."""
     subprocess.run(["networkctl", "reload"], capture_output=True, text=True, check=False)
+
+
+def read_iface_ifindex(
+    iface_name: str,
+    *,
+    sys_class_net: Path = Path("/sys/class/net"),
+) -> int | None:
+    """Return the kernel interface index for *iface_name*, or None if absent."""
+    ifindex_path = sys_class_net / iface_name / "ifindex"
+    if not ifindex_path.exists():
+        return None
+    try:
+        return int(ifindex_path.read_text(encoding="utf-8", errors="ignore").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def maybe_restart_avahi_on_ifindex_change(
+    bridge_name: str,
+    before_ifindex: int | None,
+    *,
+    after_ifindex: int | None = None,
+    sys_class_net: Path = Path("/sys/class/net"),
+    profile: str = "",
+) -> bool:
+    """Best-effort ``systemctl try-restart avahi-daemon`` if bridge ifindex changed.
+
+    Recreating the ``usb0`` bridge assigns a new ifindex, causing avahi-daemon
+    to lose the interface and its mDNS announcements to go stale across all
+    interfaces until restarted. Never raises.
+    """
+    if after_ifindex is None:
+        after_ifindex = read_iface_ifindex(bridge_name, sys_class_net=sys_class_net)
+    if after_ifindex is None or after_ifindex == before_ifindex:
+        return False
+
+    try:
+        enabled = subprocess.run(
+            ["systemctl", "is-enabled", "--quiet", "avahi-daemon"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if enabled.returncode != 0:
+            return False
+
+        res = subprocess.run(
+            ["systemctl", "try-restart", "avahi-daemon"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        detail = f"bridge={bridge_name} ifindex {before_ifindex}->{after_ifindex} rc={res.returncode}"
+        if res.returncode != 0 and res.stderr.strip():
+            detail += f" ({res.stderr.strip()})"
+        log_journal(
+            f"avahi-daemon try-restart after bridge ifindex change ({before_ifindex}->{after_ifindex}, rc={res.returncode})",
+            priority=PRIORITY_INFO if res.returncode == 0 else PRIORITY_WARNING,
+            GADGET_EVENT="avahi_restart",
+            GADGET_PROFILE=profile,
+        )
+        record_event("avahi_restart", profile=profile, detail=detail)
+        return res.returncode == 0
+    except Exception as exc:
+        log_journal(
+            f"avahi-daemon restart check failed (non-fatal): {exc}",
+            priority=PRIORITY_WARNING,
+            GADGET_EVENT="avahi_restart",
+            GADGET_PROFILE=profile,
+        )
+        return False
