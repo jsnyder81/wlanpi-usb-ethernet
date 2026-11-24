@@ -29,8 +29,7 @@ from wlanpi_usb_gadget.monitor import run_monitor
 from wlanpi_usb_gadget.netcfg import (
     enslave_and_up_bridge,
     ensure_bridge_exists,
-    maybe_restart_avahi_on_ifindex_change,
-    read_iface_ifindex,
+    maybe_restart_avahi,
     reload_networkd,
     remove_networkd_files,
     write_networkd_files,
@@ -59,7 +58,6 @@ def _cmd_apply(force: bool) -> int:
         return 0
 
     try:
-        bridge_ifindex_before = read_iface_ifindex(cfg.bridge_name)
         prof = get_profile(profile_name, serial_console=cfg.serial_console)
         macs = derive_all_macs()
         serial, _ = read_board_serial()
@@ -98,7 +96,7 @@ def _cmd_apply(force: bool) -> int:
             member_ifnames=actual_ifnames or None,
         )
         reload_networkd()
-        maybe_restart_avahi_on_ifindex_change(cfg.bridge_name, bridge_ifindex_before, profile=profile_name)
+        maybe_restart_avahi(cfg.bridge_name, profile=profile_name)
         log_journal(
             f"apply {res} profile={profile_name} udc={udc_name} dwc2={ctrl.dwc2_mode}",
             priority=PRIORITY_INFO,

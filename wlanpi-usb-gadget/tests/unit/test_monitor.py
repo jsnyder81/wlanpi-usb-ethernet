@@ -112,6 +112,7 @@ class TestMonitorLoop(unittest.TestCase):
             mock.patch.object(monitor, "discover_member_ifnames", return_value=["usbecm0", "usbrndis0"]),
             mock.patch.object(monitor, "enslave_and_up_bridge", side_effect=lambda *_a, **_kw: order.append("enslave_bridge")),
             mock.patch.object(monitor, "reload_networkd", side_effect=lambda: order.append("reload_netd")),
+            mock.patch.object(monitor, "maybe_restart_avahi", side_effect=lambda *_a, **_kw: order.append("restart_avahi") or True),
         ):
             monitor._execute_recovery_action(
                 "teardown_apply",
@@ -125,6 +126,7 @@ class TestMonitorLoop(unittest.TestCase):
         self.assertLess(order.index("apply_gadget"), order.index("ensure_bridge"))
         self.assertLess(order.index("ensure_bridge"), order.index("enslave_bridge"))
         self.assertLess(order.index("enslave_bridge"), order.index("reload_netd"))
+        self.assertLess(order.index("reload_netd"), order.index("restart_avahi"))
 
     def test_consume_reapply_flag_runs_apply_and_removes_flag(self) -> None:
         import subprocess
@@ -215,11 +217,13 @@ class TestMonitorLoop(unittest.TestCase):
                 mock.patch.object(monitor, "record_event", side_effect=lambda ev, **kw: recorded.append((ev, kw))),
                 mock.patch.object(monitor, "log_journal"),
                 mock.patch.object(monitor, "sd_notify"),
+                mock.patch.object(monitor, "maybe_restart_avahi") as mock_avahi,
                 mock.patch("select.poll", return_value=_FakePoller(_fake_poll)),
             ):
                 rc = monitor.run_monitor()
 
             self.assertEqual(rc, 0)
+            mock_avahi.assert_not_called()
             udc_edges = [kw["detail"] for ev, kw in recorded if ev == "udc_edge"]
             self.assertEqual(udc_edges, ["configured->not attached", "not attached->configured"])
 
@@ -295,11 +299,13 @@ class TestMonitorLoop(unittest.TestCase):
                 mock.patch.object(monitor, "record_event", side_effect=lambda ev, **kw: recorded.append((ev, kw))),
                 mock.patch.object(monitor, "log_journal"),
                 mock.patch.object(monitor, "sd_notify"),
+                mock.patch.object(monitor, "maybe_restart_avahi") as mock_avahi,
                 mock.patch("select.poll", return_value=_FakePoller(_fake_poll)),
             ):
                 rc = monitor.run_monitor()
 
             self.assertEqual(rc, 0)
+            mock_avahi.assert_not_called()
             udc_edges = [kw["detail"] for ev, kw in recorded if ev == "udc_edge"]
             self.assertEqual(udc_edges, ["not attached->configured", "configured->not attached"])
 

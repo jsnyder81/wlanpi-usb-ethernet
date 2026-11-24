@@ -38,8 +38,7 @@ from wlanpi_usb_gadget.mac import derive_all_macs, read_board_serial
 from wlanpi_usb_gadget.netcfg import (
     enslave_and_up_bridge,
     ensure_bridge_exists,
-    maybe_restart_avahi_on_ifindex_change,
-    read_iface_ifindex,
+    maybe_restart_avahi,
     reload_networkd,
     write_networkd_files,
 )
@@ -173,7 +172,6 @@ def _execute_recovery_action(
             recovery.last_bind_succeeded = False
             raise
     elif action == "teardown_apply" and udc_name:
-        bridge_ifindex_before = read_iface_ifindex(cfg.bridge_name)
         teardown_gadget()
         macs = derive_all_macs()
         serial, _ = read_board_serial()
@@ -192,7 +190,7 @@ def _execute_recovery_action(
             if actual:
                 write_networkd_files(cfg, prof, macs.bridge, member_ifnames=actual)
             reload_networkd()
-            maybe_restart_avahi_on_ifindex_change(cfg.bridge_name, bridge_ifindex_before, profile=profile_name)
+            maybe_restart_avahi(cfg.bridge_name, profile=profile_name)
             recovery.last_bind_succeeded = True
         except Exception:
             recovery.last_bind_succeeded = False

@@ -94,14 +94,13 @@ class TestCli(unittest.TestCase):
             self.assertIn("usb0 missing", checks["avahi_allow_interfaces"].detail)
             self.assertIn("Add usb0 to allow-interfaces", checks["avahi_allow_interfaces"].hint)
 
-    def test_apply_restarts_avahi_when_bridge_ifindex_changes(self) -> None:
+    def test_apply_restarts_avahi_with_stable_bridge_ifindex(self) -> None:
         import subprocess
         from types import SimpleNamespace
         from wlanpi_usb_gadget import netcfg
 
         cfg = GadgetConfig()
         macs = DerivedMacs("02:11:22:33:44:55", "02:aa:bb:cc:dd:ee", "02:de:ad:be:ef:01", "test")
-        ifindex_seq = iter([4, 9])
         systemctl_calls: list[list[str]] = []
 
         def _fake_systemctl(cmd: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
@@ -125,8 +124,7 @@ class TestCli(unittest.TestCase):
             mock.patch.object(cli, "reload_networkd"),
             mock.patch.object(cli, "log_journal"),
             mock.patch.object(cli, "record_event"),
-            mock.patch.object(cli, "read_iface_ifindex", side_effect=lambda _b: next(ifindex_seq)),
-            mock.patch.object(netcfg, "read_iface_ifindex", side_effect=lambda _b, **_kw: next(ifindex_seq)),
+            mock.patch.object(netcfg, "read_iface_ifindex", return_value=4),
             mock.patch("wlanpi_usb_gadget.netcfg.subprocess.run", side_effect=_fake_systemctl),
             mock.patch.object(netcfg, "record_event") as net_rec,
             mock.patch.object(netcfg, "log_journal"),
@@ -141,7 +139,7 @@ class TestCli(unittest.TestCase):
                 ["systemctl", "try-restart", "avahi-daemon"],
             ],
         )
-        net_rec.assert_called_once_with("avahi_restart", profile="ncm", detail="bridge=usb0 ifindex 4->9 rc=0")
+        net_rec.assert_called_once_with("avahi_restart", profile="ncm", detail="bridge=usb0 ifindex=4 rc=0")
 
 
 if __name__ == "__main__":

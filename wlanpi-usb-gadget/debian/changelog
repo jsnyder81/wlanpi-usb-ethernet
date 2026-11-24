@@ -1,3 +1,11 @@
+wlanpi-usb-gadget (0.5.10) trixie; urgency=medium
+
+  * Restart avahi-daemon unconditionally on every successful apply and
+    recovery teardown_apply (member/link churn stales mDNS even when
+    usb0 ifindex is unchanged), and update E20 plan evidence.
+
+ -- WLAN Pi Team <maintainers@wlanpi.com>  Tue, 24 Nov 2026 00:30:59 +0000
+
 wlanpi-usb-gadget (0.5.9) trixie; urgency=medium
 
   * Restart avahi-daemon (best-effort try-restart) when apply/recovery

@@ -303,24 +303,20 @@ def read_iface_ifindex(
         return None
 
 
-def maybe_restart_avahi_on_ifindex_change(
+def maybe_restart_avahi(
     bridge_name: str,
-    before_ifindex: int | None,
     *,
-    after_ifindex: int | None = None,
     sys_class_net: Path = Path("/sys/class/net"),
     profile: str = "",
 ) -> bool:
-    """Best-effort ``systemctl try-restart avahi-daemon`` if bridge ifindex changed.
+    """Best-effort ``systemctl try-restart avahi-daemon`` after an apply/rebuild.
 
-    Recreating the ``usb0`` bridge assigns a new ifindex, causing avahi-daemon
-    to lose the interface and its mDNS announcements to go stale across all
-    interfaces until restarted. Never raises.
+    Member netdev and address churn on ``usb0`` during gadget rebuilds causes
+    avahi-daemon's mDNS announcements to go stale across all interfaces until
+    restarted, even when the ``usb0`` bridge itself keeps its ifindex.
+    Never raises.
     """
-    if after_ifindex is None:
-        after_ifindex = read_iface_ifindex(bridge_name, sys_class_net=sys_class_net)
-    if after_ifindex is None or after_ifindex == before_ifindex:
-        return False
+    ifindex = read_iface_ifindex(bridge_name, sys_class_net=sys_class_net)
 
     try:
         enabled = subprocess.run(
@@ -338,11 +334,14 @@ def maybe_restart_avahi_on_ifindex_change(
             text=True,
             check=False,
         )
-        detail = f"bridge={bridge_name} ifindex {before_ifindex}->{after_ifindex} rc={res.returncode}"
+        detail = f"bridge={bridge_name}"
+        if ifindex is not None:
+            detail += f" ifindex={ifindex}"
+        detail += f" rc={res.returncode}"
         if res.returncode != 0 and res.stderr.strip():
             detail += f" ({res.stderr.strip()})"
         log_journal(
-            f"avahi-daemon try-restart after bridge ifindex change ({before_ifindex}->{after_ifindex}, rc={res.returncode})",
+            f"avahi-daemon try-restart after apply ({detail})",
             priority=PRIORITY_INFO if res.returncode == 0 else PRIORITY_WARNING,
             GADGET_EVENT="avahi_restart",
             GADGET_PROFILE=profile,

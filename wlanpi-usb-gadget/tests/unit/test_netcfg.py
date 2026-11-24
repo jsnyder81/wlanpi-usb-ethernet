@@ -12,7 +12,7 @@ from wlanpi_usb_gadget.config import validate_config
 from wlanpi_usb_gadget.netcfg import (
     enslave_and_up_bridge,
     ensure_bridge_exists,
-    maybe_restart_avahi_on_ifindex_change,
+    maybe_restart_avahi,
     read_iface_ifindex,
     remove_networkd_files,
     render_networkd_files,
@@ -117,7 +117,7 @@ class TestNetcfg(unittest.TestCase):
 
             self.assertEqual(calls, [["ip", "link", "set", "dev", "usb0", "address", "02:de:ad:be:ef:01"]])
 
-    def test_avahi_restart_on_ifindex_change_and_nonfatal_guards(self) -> None:
+    def test_avahi_restart_and_nonfatal_guards(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             sys_net = Path(tmp)
             br_dir = sys_net / "usb0"
@@ -125,17 +125,12 @@ class TestNetcfg(unittest.TestCase):
             (br_dir / "ifindex").write_text("12\n", encoding="utf-8")
             self.assertEqual(read_iface_ifindex("usb0", sys_class_net=sys_net), 12)
 
-            # Unchanged ifindex: no systemctl calls
-            with mock.patch("wlanpi_usb_gadget.netcfg.subprocess.run") as sub_run:
-                self.assertFalse(maybe_restart_avahi_on_ifindex_change("usb0", 12, sys_class_net=sys_net))
-            sub_run.assert_not_called()
-
-            # Changed ifindex + avahi disabled: is-enabled checked, try-restart skipped
+            # avahi disabled: is-enabled checked, try-restart skipped
             with mock.patch(
                 "wlanpi_usb_gadget.netcfg.subprocess.run",
                 return_value=subprocess.CompletedProcess(["systemctl"], 1, "", ""),
             ) as sub_run:
-                self.assertFalse(maybe_restart_avahi_on_ifindex_change("usb0", 7, sys_class_net=sys_net))
+                self.assertFalse(maybe_restart_avahi("usb0", sys_class_net=sys_net))
             sub_run.assert_called_once_with(
                 ["systemctl", "is-enabled", "--quiet", "avahi-daemon"],
                 capture_output=True,
@@ -143,7 +138,7 @@ class TestNetcfg(unittest.TestCase):
                 check=False,
             )
 
-            # Changed ifindex + avahi enabled: try-restart called + event recorded
+            # avahi enabled: try-restart called + event recorded (even when ifindex is unchanged)
             calls: list[list[str]] = []
 
             def _fake_run(cmd: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
@@ -155,7 +150,7 @@ class TestNetcfg(unittest.TestCase):
                 mock.patch("wlanpi_usb_gadget.netcfg.record_event") as rec_ev,
                 mock.patch("wlanpi_usb_gadget.netcfg.log_journal"),
             ):
-                self.assertTrue(maybe_restart_avahi_on_ifindex_change("usb0", 7, sys_class_net=sys_net, profile="ncm"))
+                self.assertTrue(maybe_restart_avahi("usb0", sys_class_net=sys_net, profile="ncm"))
             self.assertEqual(
                 calls,
                 [
@@ -163,14 +158,14 @@ class TestNetcfg(unittest.TestCase):
                     ["systemctl", "try-restart", "avahi-daemon"],
                 ],
             )
-            rec_ev.assert_called_once_with("avahi_restart", profile="ncm", detail="bridge=usb0 ifindex 7->12 rc=0")
+            rec_ev.assert_called_once_with("avahi_restart", profile="ncm", detail="bridge=usb0 ifindex=12 rc=0")
 
             # Missing systemctl binary: never fatal
             with (
                 mock.patch("wlanpi_usb_gadget.netcfg.subprocess.run", side_effect=FileNotFoundError("systemctl")),
                 mock.patch("wlanpi_usb_gadget.netcfg.log_journal"),
             ):
-                self.assertFalse(maybe_restart_avahi_on_ifindex_change("usb0", 7, sys_class_net=sys_net))
+                self.assertFalse(maybe_restart_avahi("usb0", sys_class_net=sys_net))
 
 
 if __name__ == "__main__":
